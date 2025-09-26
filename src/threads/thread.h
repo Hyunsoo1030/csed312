@@ -93,6 +93,9 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    /* Tick count used to determine when to wake up thread (modified for p1)*/
+    int64_t wakeup_tick;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -125,6 +128,10 @@ const char *thread_name (void);
 
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
+
+void thread_sleep(int64_t ticks); // (modified for p1)
+bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED); // (modified for p1)
+void thread_wakeup(int64_t ticks); // (modified for p1)
 
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);

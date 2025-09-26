@@ -28,6 +28,9 @@ static struct list ready_list;
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
 
+/* List of processes in THREAD_BLOCKED state (modified for p1) */
+static struct list sleep_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -92,6 +95,8 @@ thread_init (void)
   lock_init (&tid_lock);
   list_init (&ready_list);
   list_init (&all_list);
+  /* Initialize sleep list for BLOCKED threads (modified for p1) */
+  list_init (&sleep_list);
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -313,6 +318,58 @@ thread_yield (void)
   schedule ();
   intr_set_level (old_level);
 }
+
+/* (modified for p1)
+  Put the current thread to sleep until the timer wakes it up.
+  This function must be called with interrupts turned off. */
+void thread_sleep(int64_t ticks)
+{
+  struct thread *cur = thread_current();
+  enum intr_level old_level;
+  old_level = intr_disable(); // interrupts off
+
+  ASSERT(cur != idle_thread); // idle thread should never sleep  
+  cur->wakeup_tick = ticks; // set wakeup tick
+  list_insert_ordered (&sleep_list, &cur->elem,compare_tick,NULL); // insert into sleep list in order
+  thread_block(); // change status to BLOCKED and schedule another thread
+  
+  intr_set_level (old_level); // interrupts back to previous level
+}
+
+/* (modified for p1)
+  Wake up threads whose wakeup_tick is less than or equal to the current tick.
+  This function must be called with interrupts turned off. */
+bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+  struct thread *t1 = list_entry (a, struct thread, elem);
+  struct thread *t2 = list_entry (b, struct thread, elem);
+  if (t1->wakeup_tick < t2->wakeup_tick)
+    return true;
+  else
+    return false;
+}
+
+/* (modified for p1)
+  Wake up threads whose wakeup_tick is less than or equal to the current tick.
+  This function must be called with interrupts turned off. */
+
+void thread_wakeup(int64_t ticks)
+{
+  struct list_elem *e;
+
+  for (e = list_begin (&sleep_list); e != list_end (&sleep_list); ) 
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->wakeup_tick <= ticks) // if wakeup tick is less than or equal to current tick
+        {
+          e = list_remove(e); // remove from sleep list and get next element
+          thread_unblock(t); // unblock the thread
+        }
+      else
+        break; // since the list is ordered, we can break early
+    }
+}
+
 
 /* Invoke function 'func' on all threads, passing along 'aux'.
    This function must be called with interrupts off. */
