@@ -205,6 +205,7 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  preempt_if_needed(); // preempt current thread if needed (modified for p1)
 
   return tid;
 }
@@ -242,7 +243,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered (&ready_list, &t->elem, check_priority, 0);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -313,7 +314,7 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    list_insert_ordered (&ready_list, &cur->elem, check_priority, 0);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -393,6 +394,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+  preempt_if_needed(); // preempt current thread if needed (modified for p1)
 }
 
 /* Returns the current thread's priority. */
@@ -637,6 +639,30 @@ allocate_tid (void)
   return tid;
 }
 
+
+/* to insert element properly (modified for p1) */
+bool 
+check_priority (struct list_elem *a, struct list_elem *b, void *aux UNUSED)
+{
+  struct thread *t1 = list_entry (a, struct thread, elem);
+  struct thread *t2 = list_entry (b, struct thread, elem);
+  if (t1->priority > t2->priority)
+    return true;
+  else
+    return false;
+}
+
+/* Handle priority updates for threads already in ready_list (P1 modification). */
+void 
+preempt_if_needed(void)
+{
+  if(&ready_list == NULL || list_empty(&ready_list))
+    return;
+
+  struct thread *cur = thread_current ();
+  if (cur -> priority < list_entry (list_front (&ready_list), struct thread, elem) -> priority)
+    thread_yield ();
+}
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
