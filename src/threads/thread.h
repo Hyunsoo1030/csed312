@@ -96,6 +96,12 @@ struct thread
     /* Tick count used to determine when to wake up thread (modified for p1)*/
     int64_t wakeup_tick;
 
+    /* modified for p1 */
+    int init_priority;
+    struct lock *waiting_lock;
+    struct list donations;
+    struct list_elem donation_elem;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
@@ -139,6 +145,7 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void check_priority_and_yield(void); // (modified for p1)
 
 int thread_get_nice (void);
 void thread_set_nice (int);
@@ -147,5 +154,8 @@ int thread_get_load_avg (void);
 
 bool check_priority (struct list_elem *a, struct list_elem *b, void *aux UNUSED); // (modified for p1)
 void preempt_if_needed(void); // (modified for p1)
+void donate_priority (void); // (modified for p1)
+void remove_with_lock (struct lock *lock); // (modified for p1)
+void refresh_priority (void); // (modified for p1)
 
 #endif /* threads/thread.h */

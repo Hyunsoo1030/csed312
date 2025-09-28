@@ -394,7 +394,20 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-  preempt_if_needed(); // preempt current thread if needed (modified for p1)
+  check_priority_and_yield(); // preempt current thread if
+}
+
+void check_priority_and_yield(void)
+{
+  int max_priority;
+  if(!list_empty(&ready_list))
+  {
+    max_priority = list_entry(list_front(&ready_list),struct thread, elem)->priority;
+    if(thread_get_priority() < max_priority)
+    {
+      thread_yield();
+    }
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -523,6 +536,11 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+
+  /* added for p1 */
+  t->init_priority = priority;
+  t->waiting_lock = NULL;
+  list_init (&t->donations);
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -656,13 +674,59 @@ check_priority (struct list_elem *a, struct list_elem *b, void *aux UNUSED)
 void 
 preempt_if_needed(void)
 {
-  if(&ready_list == NULL || list_empty(&ready_list))
-    return;
-
-  struct thread *cur = thread_current ();
-  if (cur -> priority < list_entry (list_front (&ready_list), struct thread, elem) -> priority)
+  if (!list_empty (&ready_list) && 
+  thread_current ()->priority < list_entry (list_front (&ready_list), struct thread, elem)->priority)
     thread_yield ();
 }
+
+/* Donate priority to the thread holding the lock (modified for p1) */
+void
+donate_priority (void)
+{
+  int depth = 0;
+  int max_depth = 8; /* depth limitation */
+  struct thread *cur = thread_current ();
+
+  while (depth < max_depth && cur->waiting_lock){
+    struct thread *tmp = cur->waiting_lock->holder;
+    if (tmp->priority >= cur->priority) break;
+    tmp->priority = cur->priority;
+    cur = tmp;
+    depth++;
+  }
+}
+
+/* Remove threads from donation list that are waiting on LOCK (modified for p1) */
+void
+remove_with_lock (struct lock *lock)
+{
+  struct list_elem *e;
+  struct thread *cur = thread_current ();
+
+  for (e = list_begin (&cur->donations); e != list_end (&cur->donations); e = list_next (e)){
+    struct thread *t = list_entry (e, struct thread, donation_elem);
+    if (t->waiting_lock == lock)
+      list_remove (&t->donation_elem);
+  }
+}
+
+/* Refresh priority after donations are removed (modified for p1) */
+void
+refresh_priority (void)
+{
+  struct thread *cur = thread_current ();
+
+  cur->priority = cur->init_priority;
+  
+  if (!list_empty (&cur->donations)) {
+    list_sort (&cur->donations, thread_compare_donate_priority, 0);
+
+    struct thread *front = list_entry (list_front (&cur->donations), struct thread, donation_elem);
+    if (front->priority > cur->priority)
+      cur->priority = front->priority;
+  }
+}
+
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
