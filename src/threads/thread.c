@@ -394,6 +394,16 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
+
+  struct thread *cur = thread_current();
+  thread_current ()->init_priority = new_priority;
+  cur->priority = cur->init_priority;
+  if(!list_empty(&cur->donations))
+  {
+    list_sort(&cur->donations, check_priority, NULL);
+    int max_priority = (list_entry(list_begin(&cur->donations), struct thread, donation_elem))->priority;
+    cur->priority = cur->priority < max_priority ? max_priority : cur->priority;
+  }
   check_priority_and_yield(); // preempt current thread if
 }
 
@@ -660,7 +670,7 @@ allocate_tid (void)
 
 /* to insert element properly (modified for p1) */
 bool 
-check_priority (struct list_elem *a, struct list_elem *b, void *aux UNUSED)
+check_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
 {
   struct thread *t1 = list_entry (a, struct thread, elem);
   struct thread *t2 = list_entry (b, struct thread, elem);

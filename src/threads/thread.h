@@ -152,7 +152,7 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
-bool check_priority (struct list_elem *a, struct list_elem *b, void *aux UNUSED); // (modified for p1)
+bool check_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED); // (modified for p1)
 void preempt_if_needed(void); // (modified for p1)
 void donate_priority (void); // (modified for p1)
 void remove_with_lock (struct lock *lock); // (modified for p1)
