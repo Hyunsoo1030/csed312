@@ -95,6 +95,8 @@ struct thread
 
     /* Tick count used to determine when to wake up thread (modified for p1)*/
     int64_t wakeup_tick;
+    int nice;
+    int recent_cpu;
 
     /* modified for p1 */
     int init_priority;

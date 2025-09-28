@@ -195,22 +195,29 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+
+
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
   /* modified for p1 */
   struct thread *cur = thread_current ();
-  if (lock->holder) {
+
+  if(!thread_mlfqs){
+    if (lock->holder) {
     cur->waiting_lock = lock;
     list_insert_ordered (&lock->holder->donations, &cur->donation_elem, 
     			thread_compare_donate_priority, 0);
     donate_priority ();
+    }
   }
 
   sema_down (&lock->semaphore);
-  
-  cur->waiting_lock = NULL;
+
+  if(!thread_mlfqs){
+    cur->waiting_lock = NULL;
+  }
   lock->holder = cur;
 }
 
@@ -250,12 +257,16 @@ lock_try_acquire (struct lock *lock)
    handler. */
 void
 lock_release (struct lock *lock) 
-{
+{ 
+
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
-  remove_with_lock (lock);
-  refresh_priority ();
+
+  if(!thread_mlfqs){
+    remove_with_lock (lock);
+    refresh_priority ();
+  }
 
   lock->holder = NULL;
   sema_up (&lock->semaphore);
