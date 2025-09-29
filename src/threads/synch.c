@@ -208,7 +208,7 @@ lock_acquire (struct lock *lock)
     if (lock->holder) {
     cur->waiting_lock = lock;
     list_insert_ordered (&lock->holder->donations, &cur->donation_elem, 
-    			thread_compare_donate_priority, 0);
+    			check_donate_priority, 0);
     donate_priority ();
     }
   }
@@ -223,7 +223,7 @@ lock_acquire (struct lock *lock)
 
 /* added for p1 */
 bool
-thread_compare_donate_priority (const struct list_elem *l, 
+check_donate_priority (const struct list_elem *l, 
 				const struct list_elem *s, void *aux UNUSED)
 {
 	return list_entry (l, struct thread, donation_elem)->priority
@@ -265,7 +265,7 @@ lock_release (struct lock *lock)
 
   if(!thread_mlfqs){
     remove_with_lock (lock);
-    refresh_priority ();
+    reset_priority ();
   }
 
   lock->holder = NULL;

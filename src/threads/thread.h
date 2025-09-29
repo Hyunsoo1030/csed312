@@ -158,6 +158,6 @@ bool check_priority (const struct list_elem *a, const struct list_elem *b, void 
 void preempt_if_needed(void); // (modified for p1)
 void donate_priority (void); // (modified for p1)
 void remove_with_lock (struct lock *lock); // (modified for p1)
-void refresh_priority (void); // (modified for p1)
+void reset_priority (void); // (modified for p1)
 
 #endif /* threads/thread.h */

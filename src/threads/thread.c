@@ -399,10 +399,11 @@ thread_set_priority (int new_priority)
   if (thread_mlfqs)
     return;
 
-  thread_current ()->priority = new_priority;
-
   struct thread *cur = thread_current();
-  thread_current ()->init_priority = new_priority;
+
+  cur->priority = new_priority;
+
+  cur->init_priority = new_priority;
   cur->priority = cur->init_priority;
   if(!list_empty(&cur->donations))
   {
@@ -437,41 +438,45 @@ thread_get_priority (void)
 void
 thread_set_nice (int nice UNUSED) 
 {
-  enum intr_level old_level = intr_disable ();
+  /*num intr_level old_level = intr_disable ();
   thread_current ()->nice = nice;
   mlfqs_calculate_priority (thread_current ());
   preempt_if_needed();
-  intr_set_level (old_level);
+  intr_set_level (old_level);*/
+  thread_current ()->nice = nice;
 }
 
 /* Returns the current thread's nice value. */
 int
 thread_get_nice (void) 
 {
-  enum intr_level old_level = intr_disable ();
+  /*enum intr_level old_level = intr_disable ();
   int nice = thread_current ()-> nice;
   intr_set_level (old_level);
-  return nice;
+  return nice;*/
+  return thread_current ()-> nice;
 }
 
 /* Returns 100 times the system load average. */
 int
 thread_get_load_avg (void) 
 {
-  enum intr_level old_level = intr_disable ();
+  /*enum intr_level old_level = intr_disable ();
   int load_avg_value = fp_to_int_round (mult_mixed (load_avg, 100));
   intr_set_level (old_level);
-  return load_avg_value;
+  return load_avg_value;*/
+  return fp_to_int_round (mult_mixed (load_avg, 100));
 }
 
 /* Returns 100 times the current thread's recent_cpu value. */
 int
 thread_get_recent_cpu (void) 
 {
-  enum intr_level old_level = intr_disable ();
+  /*enum intr_level old_level = intr_disable ();
   int recent_cpu= fp_to_int_round (mult_mixed (thread_current ()->recent_cpu, 100));
   intr_set_level (old_level);
-  return recent_cpu;
+  return recent_cpu;*/
+  return fp_to_int_round( mult_mixed (thread_current ()->recent_cpu, 100));
 }
 
 /* Idle thread.  Executes when no other thread is ready to run.
@@ -741,14 +746,14 @@ remove_with_lock (struct lock *lock)
 
 /* Refresh priority after donations are removed (modified for p1) */
 void
-refresh_priority (void)
+reset_priority (void)
 {
   struct thread *cur = thread_current ();
 
   cur->priority = cur->init_priority;
   
   if (!list_empty (&cur->donations)) {
-    list_sort (&cur->donations, thread_compare_donate_priority, 0);
+    list_sort (&cur->donations, check_donate_priority, 0);
 
     struct thread *front = list_entry (list_front (&cur->donations), struct thread, donation_elem);
     if (front->priority > cur->priority)
