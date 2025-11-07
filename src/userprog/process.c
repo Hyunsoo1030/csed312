@@ -34,9 +34,9 @@ process_execute (const char *file_name)
   tid_t tid;
 
   // modified for p2
-  char *fn_modified;
-  char *fn_first_token;
-  char *fn_remain;
+  char *tmp;
+  char *arg;
+  char *mark;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
@@ -46,19 +46,19 @@ process_execute (const char *file_name)
   strlcpy (fn_copy, file_name, PGSIZE);
 
   // modified for p2
-  fn_modified = palloc_get_page (0);
-  if (fn_modified == NULL)
+  tmp = palloc_get_page (0);
+  if (tmp == NULL)
     return TID_ERROR;
-  strlcpy (fn_modified, file_name, PGSIZE);
-  fn_first_token = strtok_r(fn_modified, " ", &fn_remain);
+  strlcpy (tmp, file_name, PGSIZE);
+  arg = strtok_r(tmp, " ", &mark);
 
   /* Create a new thread to execute FILE_NAME. */
   //tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
-  tid = thread_create (fn_first_token, PRI_DEFAULT, start_process, fn_copy); //modified for p2
+  tid = thread_create (arg, PRI_DEFAULT, start_process, fn_copy); //modified for p2
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
-  palloc_free_page (fn_modified); //modified for p2
+  palloc_free_page (tmp); //modified for p2
   return tid;
 }
 
@@ -72,13 +72,13 @@ start_process (void *file_name_)
   bool success;
 
   // modified for p2
-  char *fn_modified;
-  char *fn_first_token;
-  char *fn_remain;
+  char *tmp;
+  char *arg;
+  char *mark;
   
-  fn_modified = palloc_get_page (0);
-  strlcpy (fn_modified, file_name, PGSIZE);
-  fn_first_token = strtok_r(fn_modified, " ", &fn_remain);
+  tmp = palloc_get_page (0);
+  strlcpy (tmp, file_name, PGSIZE);
+  arg = strtok_r(tmp, " ", &mark);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -86,13 +86,13 @@ start_process (void *file_name_)
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
   //success = load (file_name, &if_.eip, &if_.esp);
-  success = load (fn_first_token, &if_.eip, &if_.esp); //modified for p2
+  success = load (arg, &if_.eip, &if_.esp); //modified for p2
   if(success){
     argv_stack(file_name, &if_.esp);
     thread_current()->isload = true;
   }
   sema_up(&thread_current()->sema_load);
-  palloc_free_page(fn_modified);
+  palloc_free_page(tmp);
 
 
   /* If load failed, quit. */
@@ -532,14 +532,14 @@ void argv_stack(char *file_name, void **esp)
 {
   char **argv_list = palloc_get_page(0);
   int argv_count = 0;
-  char *argv_token, *fn_remained;
+  char *argv_token, *mark;
   int i=0;
   char **argv_addr = palloc_get_page(0);
   int argv_len;
 
-  char *fn_modified = palloc_get_page(0);
-  strlcpy(fn_modified, file_name, strlen(file_name)+1);
-  for(argv_token=strtok_r(fn_modified, " ", &fn_remained); argv_token != NULL ; argv_token = strtok_r(NULL, " ", &fn_remained))
+  char *tmp = palloc_get_page(0);
+  strlcpy(tmp, file_name, strlen(file_name)+1);
+  for(argv_token=strtok_r(tmp, " ", &mark); argv_token != NULL ; argv_token = strtok_r(NULL, " ", &mark))
   {
     argv_list[argv_count] = argv_token;
     argv_count++;
@@ -580,7 +580,7 @@ void argv_stack(char *file_name, void **esp)
 
   palloc_free_page(argv_list);
   palloc_free_page(argv_addr);
-  palloc_free_page(fn_modified);
+  palloc_free_page(tmp);
 }
 
 struct thread* get_child(pid_t pid)
