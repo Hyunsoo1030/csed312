@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h" // modified for p2
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -20,6 +21,7 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+extern struct lock filesys_lock; // modified for p2
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -31,6 +33,11 @@ process_execute (const char *file_name)
   char *fn_copy;
   tid_t tid;
 
+  // modified for p2
+  char *fn_modified;
+  char *fn_first_token;
+  char *fn_remain;
+
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
@@ -38,10 +45,20 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
 
+  // modified for p2
+  fn_modified = palloc_get_page (0);
+  if (fn_modified == NULL)
+    return TID_ERROR;
+  strlcpy (fn_modified, file_name, PGSIZE);
+  fn_first_token = strtok_r(fn_modified, " ", &fn_remain);
+
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  //tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (fn_first_token, PRI_DEFAULT, start_process, fn_copy); //modified for p2
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  palloc_free_page (fn_modified); //modified for p2
   return tid;
 }
 
@@ -54,12 +71,29 @@ start_process (void *file_name_)
   struct intr_frame if_;
   bool success;
 
+  // modified for p2
+  char *fn_modified;
+  char *fn_first_token;
+  char *fn_remain;
+  
+  fn_modified = palloc_get_page (0);
+  strlcpy (fn_modified, file_name, PGSIZE);
+  fn_first_token = strtok_r(fn_modified, " ", &fn_remain);
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
   if_.cs = SEL_UCSEG;
   if_.eflags = FLAG_IF | FLAG_MBS;
-  success = load (file_name, &if_.eip, &if_.esp);
+  //success = load (file_name, &if_.eip, &if_.esp);
+  success = load (fn_first_token, &if_.eip, &if_.esp); //modified for p2
+  if(success){
+    argv_stack(file_name, &if_.esp);
+    thread_current()->isload = true;
+  }
+  sema_up(&thread_current()->sema_load);
+  palloc_free_page(fn_modified);
+
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
@@ -88,7 +122,17 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  return -1;
+  //return -1;
+
+  int status;
+  struct thread* child = get_child(child_tid);
+  if(!child) return -1;
+  sema_down(&(child->sema_parent_wait));
+  status = child->exit_status;
+  remove_child(child);
+  
+  sema_up(&(child->sema_child_exit));
+  return status;
 }
 
 /* Free the current process's resources. */
@@ -97,6 +141,17 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+
+  //modified for p2
+  int i;
+  for(i = 2; i < cur->fd_max; i++){
+    close(i);
+  }
+  palloc_free_page(cur->fd_table);
+
+  file_close(cur->cur_file);
+  
+  printf("%s: exit(%d)\n", cur->name, cur->exit_status);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -221,13 +276,20 @@ load (const char *file_name, void (**eip) (void), void **esp)
     goto done;
   process_activate ();
 
+  lock_acquire(&filesys_lock); //modified for p2
+
   /* Open executable file. */
   file = filesys_open (file_name);
   if (file == NULL) 
     {
+      lock_release(&filesys_lock); //modified for p2
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
+    //modified for p2
+    t->cur_file = file;
+    file_deny_write(file);
+    lock_release(&filesys_lock);
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -312,7 +374,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  //file_close (file); //modified for p2
   return success;
 }
 
@@ -462,4 +524,80 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+
+/* modified for p2 */
+void argv_stack(char *file_name, void **esp)
+{
+  char **argv_list = palloc_get_page(0);
+  int argv_count = 0;
+  char *argv_token, *fn_remained;
+  int i=0;
+  char **argv_addr = palloc_get_page(0);
+  int argv_len;
+
+  char *fn_modified = palloc_get_page(0);
+  strlcpy(fn_modified, file_name, strlen(file_name)+1);
+  for(argv_token=strtok_r(fn_modified, " ", &fn_remained); argv_token != NULL ; argv_token = strtok_r(NULL, " ", &fn_remained))
+  {
+    argv_list[argv_count] = argv_token;
+    argv_count++;
+  }
+  argv_list[argv_count] = NULL;
+
+  // 1. put arguments to stack
+  for (i=argv_count-1; i>=0; i--){
+    argv_len = strlen(argv_list[i]);
+    *esp -= argv_len+1;
+    strlcpy(*esp, argv_list[i], argv_len + 1);
+    argv_addr[i] = *esp;
+  }
+
+  // 2. word alignment
+  *esp -= ((uint32_t)*esp) % 4;
+  
+  // 3. put address of arguments to stack
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+
+  for (i=argv_count-1; i>=0; i--){
+    *esp -= 4;
+    **(uint32_t **)esp = argv_addr[i];
+  }
+
+  // 4. put start address of argument_list (argv)
+  *esp -= 4;
+  **(uint32_t **)esp = (uint32_t) (*esp + 4);
+
+  // 5. put argc
+  *esp -= 4;
+  **(uint32_t **)esp = argv_count;
+
+  // 6. put return address
+  *esp -= 4;
+  **(uint32_t **)esp = 0;
+
+  palloc_free_page(argv_list);
+  palloc_free_page(argv_addr);
+  palloc_free_page(fn_modified);
+}
+
+struct thread* get_child(pid_t pid)
+{
+  struct list_elem *elem;
+  struct thread* t;
+  struct list *child_list = &(thread_current()->child_list);
+
+  for (elem = list_begin(child_list); elem != list_end(child_list) ; elem = list_next(elem)){
+    t = list_entry(elem, struct thread, child_elem);
+    if(t->tid == pid) return t;
+  }
+  return NULL;
+}
+
+
+void remove_child(struct thread* t)
+{
+  if(t) list_remove(&(t->child_elem));
 }

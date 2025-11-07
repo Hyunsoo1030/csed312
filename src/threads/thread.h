@@ -5,6 +5,9 @@
 #include <list.h>
 #include <stdint.h>
 
+/* modified for p2*/
+#include "threads/synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -93,9 +96,38 @@ struct thread
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
+    /* Tick count used to determine when to wake up thread (modified for p1)*/
+    int64_t wakeup_tick;
+    int nice;
+    int recent_cpu;
+
+    /* modified for p1 */
+    int init_priority;
+    struct lock *waiting_lock;
+    struct list donations;
+    struct list_elem donation_elem;
+
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+
+    //modified for p2
+    struct thread *parent;
+    struct list_elem child_elem;
+    struct list child_list;
+    
+    bool isload;
+
+    struct semaphore sema_load;
+    struct semaphore sema_child_exit;
+    struct semaphore sema_parent_wait;
+    
+    int exit_status;
+
+    struct file **fd_table;
+    struct file* cur_file;
+    int fd_max;
+
 #endif
 
     /* Owned by thread.c. */
@@ -126,16 +158,27 @@ const char *thread_name (void);
 void thread_exit (void) NO_RETURN;
 void thread_yield (void);
 
+void thread_sleep(int64_t ticks); // (modified for p1)
+bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED); // (modified for p1)
+void thread_wakeup(int64_t ticks); // (modified for p1)
+
 /* Performs some operation on thread t, given auxiliary data AUX. */
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void check_priority_and_yield(void); // (modified for p1)
 
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+bool check_priority (const struct list_elem *a, const struct list_elem *b, void *aux UNUSED); // (modified for p1)
+void preempt_if_needed(void); // (modified for p1)
+void donate_priority (void); // (modified for p1)
+void remove_with_lock (struct lock *lock); // (modified for p1)
+void reset_priority (void); // (modified for p1)
 
 #endif /* threads/thread.h */
