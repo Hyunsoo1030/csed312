@@ -9,6 +9,8 @@
 static uint32_t *active_pd (void);
 static void invalidate_pagedir (uint32_t *);
 
+/*hello*/
+
 /* Creates a new page directory that has mappings for kernel
    virtual addresses, but none for user virtual addresses.
    Returns the new page directory, or a null pointer if memory
