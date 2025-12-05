@@ -27,7 +27,7 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 extern struct lock filesys_lock; // modified for p2
-
+extern struct lock frame_lock; // modified for p3
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -298,10 +298,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
-    //modified for p2
-    t->cur_file = file;
-    file_deny_write(file);
-    lock_release(&filesys_lock);
+  //modified for p2
+  t->cur_file = file;
+  //file_deny_write(file); //modified for p3
+  lock_release(&filesys_lock);
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -514,16 +514,41 @@ setup_stack (void **esp)
 {
   uint8_t *kpage;
   bool success = false;
+  struct frame *frame;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
+  // modified for p3
+  lock_acquire(&frame_lock);
+  frame = alloc_frame(PAL_USER | PAL_ZERO);
+
+  // kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  // if (kpage != NULL) 
+  //   {
+  //     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+  //     if (success)
+  //       *esp = PHYS_BASE;
+  //     else
+  //       palloc_free_page (kpage);
+  //   }
+  if (fram->page_addr != NULL)
+  {
+    success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame->page_addr, true);
+    if (success)
     {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
+      frame->vme = vme_construct(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, NULL, 0, 0);
+      if(!frame->vme)
+      {
+        lock_release(&frame_lock);
+        return false;
+      }
+      vme_insert(&thread_current()->vm, frame->vme);
+      *esp = PHYS_BASE;
+    }  
+    else
+    {
+      free_frame(frame->page_addr);
     }
+  }
+  lock_release(&frame_lock);
   return success;
 }
 
@@ -621,4 +646,84 @@ struct thread* get_child(pid_t pid)
 void remove_child(struct thread* t)
 {
   if(t) list_remove(&(t->child_elem));
+}
+
+// modified for lab3
+bool handle_fault(struct vm_entry *vme)
+{
+  bool success = false;
+  lock_acquire(&frame_lock);
+  struct frame* frame = alloc_frame (PAL_USER);
+  frame->vme = vme;
+  switch(vme->type)
+  {
+    case VM_BIN:
+      success = load_file(frame->page_addr, vme);
+      break;
+    case VM_FILE:
+      success = load_file(frame->page_addr, vme);
+      break;
+    case VM_ANON:
+      success = swap_in(vme->swap_slot, frame->page_addr);
+      break;
+    default:
+      lock_release(&frame_lock);
+      return false;
+  }
+
+  if (!success)
+  {
+    free_frame(frame->page_addr);
+    lock_release(&frame_lock);
+    return false;
+  }
+  if (!install_page(vme->vaddr, frame->page_addr, vme->writable))
+  {
+    free_frame(frame->page_addr);
+    lock_release(&frame_lock);
+    return false;
+  }
+
+  vme->is_loaded = true;
+  lock_release(&frame_lock);
+  return true;
+}
+
+
+bool expand_stack(void *addr)
+{
+  struct frame *frame;
+	void *upage = pg_round_down(addr);
+  bool success = false;
+
+  lock_acquire(&frame_lock);
+	frame = alloc_frame(PAL_USER | PAL_ZERO);
+	if (frame)
+  {
+    success = install_page(upage, frame->page_addr, true);
+    if (!success)
+    {
+      free_frame(frame->page_addr); // page 할당 해제
+      lock_release(&frame_lock);
+      return success;
+    }
+    else
+    {
+      frame->vme = vme_construct(VM_ANON, upage, true, true, NULL, NULL, 0, 0);
+      if (!frame->vme)
+      {
+        lock_release(&frame_lock);
+        return false;
+      }
+      vme_insert(&thread_current()->vm, frame->vme);
+      lock_release(&frame_lock);
+      return success;
+    }
+  }
+	else
+  {
+    lock_release(&frame_lock);
+    return success;
+  }
+    
 }

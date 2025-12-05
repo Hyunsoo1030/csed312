@@ -2,7 +2,10 @@
 #define USERPROG_PROCESS_H
 
 #include "threads/thread.h"
+#include "vm/page.h" // modified for p3
+
 typedef int pid_t; // modified for p2
+
 
 tid_t process_execute (const char *file_name);
 int process_wait (tid_t);
@@ -15,3 +18,7 @@ void process_activate (void);
 void argv_stack(char *file_name, void **esp);
 struct thread* get_child(pid_t pid);
 void remove_child(struct thread* t);
+
+// modified for p3
+bool handle_fault(struct vm_entry *vme);
+bool expand_stack(void *addr);
