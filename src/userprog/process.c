@@ -20,8 +20,8 @@
 #include "threads/vaddr.h"
 
 // modified for p3
-#include "vm/page.h"
 #include "vm/frame.h"
+#include "vm/page.h"
 #include "vm/swap.h"
 
 static thread_func start_process NO_RETURN;
