@@ -109,13 +109,12 @@ syscall_handler (struct intr_frame *f UNUSED)
   }
 }
 
-//modified for p2
+//modified for p3
 void is_valid_addr(void *addr)
 {
-  //if (!addr || !is_user_vaddr(addr)) 
-  //  exit(-1);
-  if (!addr || !is_user_vaddr(addr) || !pagedir_get_page(thread_current()->pagedir, addr)) 
+  if (!addr || !is_user_vaddr(addr)) 
     exit(-1);
+
 }
 
 //modified for p2
