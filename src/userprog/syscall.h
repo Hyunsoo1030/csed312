@@ -2,6 +2,7 @@
 #define USERPROG_SYSCALL_H
 # include <stdbool.h>
 typedef int pid_t;
+typedef int mapid_t; // modified for p3
 
 void syscall_init (void);
 /* modified for p2 */
@@ -24,5 +25,6 @@ int write (int fd, const void *buffer, unsigned size);
 void seek (int fd, unsigned position);
 unsigned tell (int fd);
 void close (int fd);
-
+mapid_t mmap(int fd, void* addr); // modified for p3
+void munmap(mapid_t mapid); // modified for p3
 #endif /* userprog/syscall.h */
