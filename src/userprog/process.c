@@ -19,9 +19,15 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
+// modified for p3
+#include "vm/page.h"
+#include "vm/frame.h"
+#include "vm/swap.h"
+
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 extern struct lock filesys_lock; // modified for p2
+
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -75,10 +81,13 @@ start_process (void *file_name_)
   char *tmp;
   char *arg;
   char *mark;
-  
+
   tmp = palloc_get_page (0);
   strlcpy (tmp, file_name, PGSIZE);
   arg = strtok_r(tmp, " ", &mark);
+
+  // modified for p3
+  vm_init(&thread_current()->vm);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -152,6 +161,9 @@ process_exit (void)
   file_close(cur->cur_file);
   
   printf("%s: exit(%d)\n", cur->name, cur->exit_status);
+
+  //modified for p3
+  vm_destroy(&cur->vm);
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -458,30 +470,39 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
-        return false;
+      // modified for p3
+      
+      //  /* Get a page of memory. */
+      // uint8_t *kpage = palloc_get_page (PAL_USER);
+      // if (kpage == NULL)
+      //   return false;
 
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
+      // /* Load this page. */
+      // if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+      //   {
+      //     palloc_free_page (kpage);
+      //     return false; 
+      //   }
+      // memset (kpage + page_read_bytes, 0, page_zero_bytes);
 
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
+      // /* Add the page to the process's address space. */
+      // if (!install_page (upage, kpage, writable)) 
+      //   {
+      //     palloc_free_page (kpage);
+      //     return false; 
+      //   }
+      
+      //modified for p3
+      struct vm_entry *vme = vme_construct(VM_BIN, upage, writable, false, file, ofs, page_read_bytes, page_zero_bytes);
+      if(!vme) return false;
+      vme_insert(&thread_current()->vm, vme);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
+      //modified for p3
+      ofs += page_read_bytes;
     }
   return true;
 }
