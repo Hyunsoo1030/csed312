@@ -529,12 +529,12 @@ setup_stack (void **esp)
   //     else
   //       palloc_free_page (kpage);
   //   }
-  if (fram->page_addr != NULL)
+  if (frame->page_addr != NULL)
   {
     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame->page_addr, true);
     if (success)
     {
-      frame->vme = vme_construct(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, NULL, 0, 0);
+      frame->vme = vme_construct(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, 0, 0, 0);
       if(!frame->vme)
       {
         lock_release(&frame_lock);

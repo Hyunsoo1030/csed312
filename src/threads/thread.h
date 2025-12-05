@@ -8,6 +8,9 @@
 /* modified for p2*/
 #include "threads/synch.h"
 
+// modified for p3
+#include "lib/kernel/hash.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
   {

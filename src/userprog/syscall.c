@@ -12,8 +12,13 @@
 #include "userprog/process.h"
 #include <string.h>
 
+// modified for p3
+#include "vm/page.h"
+#include "vm/frame.h"
+
 static void syscall_handler (struct intr_frame *);
 struct lock filesys_lock; // modified for p2
+struct lock frame_lock; // modified for p3
 
 void
 syscall_init (void) 
@@ -29,7 +34,7 @@ syscall_handler (struct intr_frame *f UNUSED)
   //thread_exit ();
 
   //modified for p2
-  //thread_current()->esp = f->esp;
+  thread_current()->esp = f->esp;
   
   is_valid_addr((void *)(f->esp));
   int i;
@@ -48,7 +53,7 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
     case SYS_EXEC:
       get_argument(f->esp+4, argv, 1);
-      f->eax = exec((const char*)argv[0]);
+      f->eax = exec((const char*)argv[0], f->esp);
       break;
     case SYS_WAIT:
       get_argument(f->esp+4, argv, 1);
@@ -72,11 +77,11 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
     case SYS_READ:
       get_argument(f->esp+4, argv, 3);
-      f->eax = read((int)argv[0], (void *)argv[1], (unsigned)argv[2]);
+      f->eax = read((int)argv[0], (void *)argv[1], (unsigned)argv[2], f->esp);
       break;
     case SYS_WRITE:
       get_argument(f->esp+4, argv, 3);
-      f->eax = write((int)argv[0], (const void *)argv[1], (unsigned)argv[2]);
+      f->eax = write((int)argv[0], (const void *)argv[1], (unsigned)argv[2], f->esp);
       break;
     case SYS_SEEK:
       get_argument(f->esp+4, argv, 2);
@@ -129,7 +134,7 @@ void exit(int exit_code)
 }
 
 
-pid_t exec (const char *cmd_line)
+pid_t exec (const char *cmd_line, void *esp)
 {
   char *ptr = cmd_line;
   struct thread* child;
@@ -295,7 +300,7 @@ struct file *process_get_file(int fd)
   return NULL; 
 }
 
-int read (int fd, void *buffer, unsigned size)
+int read (int fd, void *buffer, unsigned size, void *esp)
 {
   int bytes_read=0;
   struct file *f;
@@ -383,7 +388,7 @@ int read (int fd, void *buffer, unsigned size)
   return bytes_read;
 }
 
-int write (int fd, const void *buffer, unsigned size)
+int write (int fd, const void *buffer, unsigned size, void *esp)
 {
   int bytes_write = 0;
   struct file* f;
