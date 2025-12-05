@@ -128,6 +128,12 @@ struct thread
     struct file* cur_file;
     int fd_max;
 
+    // modified for p3
+    struct list mmap_list;
+    int mmap_next;
+    struct hash vm;
+    void *esp;
+
 #endif
 
     /* Owned by thread.c. */

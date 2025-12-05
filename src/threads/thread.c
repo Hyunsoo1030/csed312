@@ -613,6 +613,10 @@ init_thread (struct thread *t, const char *name, int priority)
   // modified for p2
   list_init(&t->child_list);
 
+  // modified for p3
+  t->mmap_next = 1;
+  list_init(&t->mmap_list);
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
