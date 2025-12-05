@@ -18,7 +18,7 @@
 
 static void syscall_handler (struct intr_frame *);
 struct lock filesys_lock; // modified for p2
-struct lock frame_lock; // modified for p3
+
 
 void
 syscall_init (void) 
@@ -95,7 +95,15 @@ syscall_handler (struct intr_frame *f UNUSED)
       get_argument(f->esp+4, argv, 1);
       close((int)argv[0]);
       break;
-
+    // modified for p3
+    case SYS_MMAP:
+      get_argument(f->esp+4, argv, 2);
+      f->eax = mmap(argv[0], (void *)argv[1]);
+      break;
+    case SYS_MUNMAP:
+      get_argument(f->esp+4, argv, 1);
+      munmap(argv[0]);
+      break;
     default:
       exit(-1);
   }

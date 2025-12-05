@@ -159,6 +159,8 @@ process_exit (void)
   palloc_free_page(cur->fd_table);
 
   file_close(cur->cur_file);
+  for (i = 1 ; i<cur->mmap_next ;i++)
+    munmap(i);
   
   printf("%s: exit(%d)\n", cur->name, cur->exit_status);
 

@@ -18,9 +18,9 @@ struct frame
 	bool pinned;
 };
 
-struct list frame_table;
-struct lock frame_lock;
-struct list_elem *frame_clock;
+extern struct list frame_table;
+extern struct lock frame_lock;
+extern struct list_elem *frame_clock;
 
 void frame_table_init(void);
 void frame_insert(struct frame *frame);

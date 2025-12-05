@@ -8,6 +8,10 @@
 
 extern struct lock filesys_lock;
 
+struct list frame_table;   
+struct lock frame_lock;
+struct list_elem *frame_clock;
+
 // Managing frame table
 void frame_table_init(void)
 {
