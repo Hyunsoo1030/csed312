@@ -5,6 +5,9 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 
+// modified for p3
+#include "threads/vaddr.h"
+
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -148,14 +151,57 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
+  // modified for p3
+  if(is_kernel_vaddr(fault_addr) || !not_present) 
+  {
+      // sync을 위하여 lock을 relase
+      if(lock_held_by_current_thread(&frame_lock))
+      {
+         lock_release(&frame_lock);
+      }
+      exit(-1);
+  }
+      
+
+  // 2. vm_entry 정보 찾기   
+  struct vm_entry *vme = vme_find(fault_addr); 
+  // 3. 해당 entry의 유효성을 확인
+   void* esp = user ? f->esp : thread_current()->esp;
+   if(vme)
+   {
+      if (!handle_fault(vme))
+      {
+         exit(-1);
+      }
+   }
+   else
+   {
+      uint32_t base = 0xC0000000;
+      uint32_t limit = 0x800000;
+      uint32_t lowest_stack_addr = base-limit;
+      if ( (fault_addr >= (esp-32)) && (fault_addr >= lowest_stack_addr))
+      {
+         if (!expand_stack(fault_addr))
+         {
+            exit(-1);
+         }
+         else
+         {
+            return;
+         }
+      }
+      else
+         exit(-1);
+   }
+
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
-     which fault_addr refers. */
+     which fault_addr refers. 
   printf ("Page fault at %p: %s error %s page in %s context.\n",
           fault_addr,
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",
           user ? "user" : "kernel");
-  kill (f);
+  kill (f); */
 }
 
