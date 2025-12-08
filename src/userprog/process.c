@@ -507,7 +507,7 @@ setup_stack (void **esp)
 
   // add page to pagedir
   if(!install_page(upage, frame->page_addr, true)){
-    release_frame(frame->page_addr);
+    free_frame(frame->page_addr);
     goto done;
   }
   
@@ -622,7 +622,7 @@ void remove_child(struct thread* t)
 }
 
 // modified for p3
-bool handle_fault(struct vm_entry *vm_entry)
+bool fault_handling(struct vm_entry *vm_entry)
 {
   struct frame* frame = NULL;
   bool success = false;
@@ -661,7 +661,7 @@ bool handle_fault(struct vm_entry *vm_entry)
 
 fail:
   if (frame != NULL)
-    release_frame(frame->page_addr);
+    free_frame(frame->page_addr);
   lock_release(&frame_table_lock);
   return false;
 }
@@ -685,7 +685,7 @@ bool expand_stack(void *addr)
   // 2. add page to pagedir
   success = install_page(upage, frame->page_addr, true);
   if(!success){
-    release_frame(frame->page_addr);
+    free_frame(frame->page_addr);
     lock_release(&frame_table_lock);
     return false;
   }
@@ -693,7 +693,7 @@ bool expand_stack(void *addr)
   // 3. create vm_entry and insert to vm table
   frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, 0, 0, 0);
   if(!frame->vm_entry){
-    release_frame(frame->page_addr);
+    free_frame(frame->page_addr);
     lock_release(&frame_table_lock);
     return false;
   }

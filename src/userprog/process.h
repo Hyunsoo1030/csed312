@@ -20,5 +20,5 @@ struct thread* get_child(pid_t pid);
 void remove_child(struct thread* t);
 
 // modified for p3
-bool handle_fault(struct vm_entry *vme);
+bool fault_handling(struct vm_entry *vme);
 bool expand_stack(void *addr);

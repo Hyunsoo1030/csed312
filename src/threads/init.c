@@ -104,7 +104,7 @@ main (void)
   paging_init ();
 
   // modified for p3
-  frame_table_init();
+  ft_init();
 
   /* Segmentation. */
 #ifdef USERPROG

@@ -171,7 +171,7 @@ page_fault (struct intr_frame *f)
    void* esp = user ? f->esp : thread_current()->esp;
    if(vm_entry)
    {
-      if (!handle_fault(vm_entry))
+      if (!fault_handling(vm_entry))
       {
          exit(-1);
       }

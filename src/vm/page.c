@@ -52,7 +52,7 @@ bool vm_entry_delete (struct hash *vm, struct vm_entry *vme) // syscall munmapì—
 	{
 		void *kaddr = pagedir_get_page(thread_current()->pagedir, vme->vaddr);
 		if (kaddr != NULL)
-		release_frame(kaddr);
+		free_frame(kaddr);
 
 		free(vme);
 		success = true;
@@ -89,7 +89,7 @@ void vm_destroy_action(struct hash_elem *e, void *aux UNUSED)
 		{
 		void *kaddr = pagedir_get_page(thread_current()->pagedir, vme->vaddr);
 		if (kaddr != NULL)
-			release_frame(kaddr);
+			free_frame(kaddr);
 		}
 		free(vme);
 	}
