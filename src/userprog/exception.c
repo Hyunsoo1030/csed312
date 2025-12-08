@@ -154,56 +154,48 @@ page_fault (struct intr_frame *f)
   user = (f->error_code & PF_U) != 0;
 
   // modified for p3
-  if(is_kernel_vaddr(fault_addr) || !not_present) 
-  {
-      // sync을 위하여 lock을 relase
-      if(lock_held_by_current_thread(&frame_table_lock))
-      {
-         lock_release(&frame_table_lock);
-      }
-      exit(-1);
-  }
-      
 
-  // 2. vm_entry 정보 찾기   
-  struct vm_entry *vm_entry = vm_entry_find(fault_addr); 
-  // 3. 해당 entry의 유효성을 확인
-   void* esp = user ? f->esp : thread_current()->esp;
-   if(vm_entry)
-   {
-      if (!fault_handling(vm_entry))
-      {
-         exit(-1);
-      }
-   }
-   else
-   {
-      uint32_t base = 0xC0000000;
-      uint32_t limit = 0x800000;
-      uint32_t lowest_stack_addr = base-limit;
-      if ( (fault_addr >= (esp-32)) && (fault_addr >= lowest_stack_addr))
-      {
-         if (!expand_stack(fault_addr))
-         {
-            exit(-1);
-         }
-         else
-         {
-            return;
-         }
-      }
-      else
-         exit(-1);
-   }
+  /* 커널 주소 접근이거나, 단순 권한 위반(= not_present가 아님)이면
+     lazy loading 대상이 아니므로 곧바로 종료한다. */
+  if (!not_present || is_kernel_vaddr (fault_addr))
+    {
+      if (lock_held_by_current_thread (&frame_table_lock))
+        lock_release (&frame_table_lock);
+      exit (-1);
+    }
 
-  /* To implement virtual memory, delete the rest of the function
-     body, and replace it with code that brings in the page to
-     which fault_addr refers. 
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
-          fault_addr,
-          not_present ? "not present" : "rights violation",
-          write ? "writing" : "reading",
-          user ? "user" : "kernel");
-  kill (f); */
+  /* user 모드면 f->esp, kernel 모드면 thread에 저장해둔 esp 사용 */
+  void *esp = user ? f->esp : thread_current ()->esp;
+
+  /* 1) 우선 SPT에서 해당 주소에 대한 vm_entry를 찾는다. */
+  struct vm_entry *vme = vm_entry_find (fault_addr);
+
+  if (vme != NULL)
+    {
+      /* vm_entry가 존재하면 lazy loading / swap-in 처리 시도 */
+      if (!fault_handling (vme))
+        exit (-1);
+      return;
+    }
+
+  /* 2) vm_entry가 없으면, 스택 확장 가능한 접근인지 검사한다. */
+
+  /* Pintos에서 user stack 최대 크기를 8MB로 제한한다고 가정.
+     PHYS_BASE는 user virtual memory의 최상단 주소이므로,
+     그 아래로 8MB까지를 유효한 stack 영역으로 본다. */
+  const size_t MAX_STACK_SIZE = 8 * 1024 * 1024;   /* 8 MB */
+  void *stack_lower_bound = (uint8_t *) PHYS_BASE - MAX_STACK_SIZE;
+
+  bool within_stack_limit = fault_addr >= stack_lower_bound;                   /* 전체 stack 범위 안인지 */
+  bool near_current_esp = fault_addr >= (void *) ((uint8_t *) esp - 32);     /* esp 기준 허용 범위인지 */
+
+  if (within_stack_limit && near_current_esp) {
+      if (!expand_stack (fault_addr))
+        exit (-1);
+      return;
+    }
+
+  /* vm_entry도 없고, 유효한 stack 확장도 아니면 잘못된 접근이므로 종료 */
+  exit (-1);
 }
 

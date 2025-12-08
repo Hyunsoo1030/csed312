@@ -474,11 +474,14 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
       // modified for p3
 
+      /* 가상 메모리 엔트리 생성 */
       struct vm_entry *vme = vm_entry_create(VM_BIN, upage, is_writable, false, file, ofs, page_bytes_to_read, page_zero_bytes);
       
-      if(vme == NULL)
+      
+      if(vme == NULL) // vm_entry 생성 실패 시
         return false;
 
+      /* vm_entry를 현재 스레드의 vm 해시에 삽입 */
       vm_entry_insert(&thread_current()->vm, vme);
 
       /* Advance. */
@@ -500,27 +503,39 @@ setup_stack (void **esp)
   void *upage = (uint8_t *) PHYS_BASE - PGSIZE;
 
   // modified for p3
-  lock_acquire(&frame_table_lock);
+  lock_acquire(&frame_table_lock); // frame table lock 획득
+
+  /* 1. 새 스택 페이지를 위한 프레임 할당 */
   struct frame *frame = allocate_frame(PAL_USER | PAL_ZERO);
+
+  /* 프레임 또는 물리 페이지가 정상적으로 할당되지 않은 경우 종료 */
   if (frame == NULL || frame->page_addr == NULL)
     goto done;
 
-  // add page to pagedir
+  /* 2. 페이지 테이블에 (upage → page_addr) 매핑 생성
+   실패 시 프레임을 해제하고 종료 */
   if(!install_page(upage, frame->page_addr, true)){
     free_frame(frame->page_addr);
     goto done;
   }
   
-  // create vm_entry for stack
+  /* 3. 스택 페이지를 위한 vm_entry 생성
+   - 타입: VM_ANON
+   - vaddr: upage
+   - is_writable: true
+   - is_loaded: true (즉시 물리 메모리에 적재됨)
+*/
   frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, 0, 0, 0);
   if(!frame->vm_entry){
     goto done;
   }
+  /* 4. 생성한 vm_entry를 현재 스레드의 SPT(hash table)에 등록 */
   vm_entry_insert(&thread_current()->vm, frame->vm_entry);
+  /* 5. 스택 포인터를 사용자 영역 최상단으로 설정 */
   *esp = PHYS_BASE;
   success = true;
 done:
-  lock_release(&frame_table_lock);
+  lock_release(&frame_table_lock); // frame table lock 해제
   return success;
 }
 
@@ -621,7 +636,8 @@ void remove_child(struct thread* t)
   if(t) list_remove(&(t->child_elem));
 }
 
-// modified for p3
+/// modified for p3
+// page fault 발생 시, 해당 페이지를 실제 물리 메모리에 적재하는 함수
 bool fault_handling(struct vm_entry *vm_entry)
 {
   struct frame* frame = NULL;
@@ -629,76 +645,86 @@ bool fault_handling(struct vm_entry *vm_entry)
 
   lock_acquire(&frame_table_lock);
 
-  // 1. allocate frame
-  frame = allocate_frame (PAL_USER);
+  /* 1.프레임 할당 */
+  frame = allocate_frame(PAL_USER);
   if(frame == NULL){
-    goto fail;
+    goto fail;   // 프레임 할당 실패 → 에러 처리
   }
-  frame->vm_entry = vm_entry;
+  frame->vm_entry = vm_entry; // 프레임과 vm_entry 연결
 
-  // 2. read data to frame according to vm_entry type
+  /* 2. vm_entry 타입에 따라 페이지 데이터를 채워넣기 */
   switch(vm_entry->type)
   {
-    case VM_BIN:
+    case VM_BIN:  
     case VM_FILE:
+      //실행 파일 또는 mmap 파일에서 데이터를 읽어옴
       success = read_file_to_page(frame->page_addr, vm_entry);
       break;
+
     case VM_ANON:
+      //swap 영역에 저장된 내용을 물리 메모리로 가져오기
       success = swap_in(vm_entry->swap_slot, frame->page_addr);
       break;
+
     default:
-      goto fail;
+      goto fail; //정의되지 않은 타입 → 실패 처리
   }
 
-  if (!success) goto fail;
-
-  // 3. add page to pagedir
-  if (!install_page(vm_entry->vaddr, frame->page_addr, vm_entry->is_writable))
+  if (!success)
     goto fail;
-  vm_entry->is_loaded = true;
-  lock_release(&frame_table_lock);
+
+  /* 3. 페이지 테이블에 (vaddr → paddr) 매핑 추가 */
+  if (!install_page(vm_entry->vaddr, frame->page_addr, vm_entry->is_writable))
+    goto fail; // 매핑 실패 시 오류 처리
+
+  vm_entry->is_loaded = true;   // 페이지가 RAM에 적재됨
+  lock_release(&frame_table_lock);    //lock 해제
   return true;
 
 fail:
+  /* 실패 시, 이미 할당한 프레임 해제 */
   if (frame != NULL)
     free_frame(frame->page_addr);
+
   lock_release(&frame_table_lock);
   return false;
 }
 
-
+// modified for p3
+// 사용자 스택 확장 함수
 bool expand_stack(void *addr)
 {
+  // fault가 발생한 주소를 페이지 단위로 내림해서 upage 계산
 	void *upage = pg_round_down(addr);
   struct frame *frame;
   bool success;
 
   lock_acquire(&frame_table_lock);
 
-  // 1. allocate frame
+  // 1. 새로운 프레임 할당 (zero 페이지)
 	frame = allocate_frame(PAL_USER | PAL_ZERO);
-	if (frame == NULL){
+	if (frame == NULL){ // 프레임 할당 실패 시
     lock_release(&frame_table_lock);
     return false;
   }
 
-  // 2. add page to pagedir
+  // 2. page directory에 (upage → page_addr) 매핑 생성
   success = install_page(upage, frame->page_addr, true);
-  if(!success){
+  if(!success){ // 매핑 생성 실패 시
     free_frame(frame->page_addr);
     lock_release(&frame_table_lock);
     return false;
   }
 
-  // 3. create vm_entry and insert to vm table
+  // 3. 스택 확장을 위한 anonymous vm_entry 생성
   frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, 0, 0, 0);
-  if(!frame->vm_entry){
+  if(!frame->vm_entry){ // vm_entry 생성 실패 시  
     free_frame(frame->page_addr);
     lock_release(&frame_table_lock);
     return false;
   }
 
-  // 4. insert vm_entry to vm table
+  // 4. 생성된 vm_entry를 현재 스레드의 SPT에 삽입
   vm_entry_insert(&thread_current()->vm, frame->vm_entry);
   lock_release(&frame_table_lock);
   return true;
