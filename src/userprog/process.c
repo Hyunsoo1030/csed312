@@ -474,16 +474,18 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 
       // modified for p3
 
-      struct vm_entry *vm_entry = vm_entry_create(VM_BIN, upage, is_writable, false, file, ofs, page_bytes_to_read, page_zero_bytes);
-      if(!vm_entry) return false;
-      vm_entry_insert(&thread_current()->vm, vm_entry);
+      struct vm_entry *vme = vm_entry_create(VM_BIN, upage, is_writable, false, file, ofs, page_bytes_to_read, page_zero_bytes);
+      
+      if(vme == NULL)
+        return false;
+
+      vm_entry_insert(&thread_current()->vm, vme);
 
       /* Advance. */
       bytes_to_read -= page_bytes_to_read;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
-      //modified for p3
-      ofs += page_bytes_to_read;
+      ofs += page_bytes_to_read; //modified for p3
     }
   return true;
 }
@@ -493,36 +495,35 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp) 
 {
-  uint8_t *kpage;
+  //uint8_t *kpage;
   bool success = false;
-  struct frame *frame;
+  void *upage = (uint8_t *) PHYS_BASE - PGSIZE;
 
   // modified for p3
   lock_acquire(&frame_table_lock);
-  frame = allocate_frame(PAL_USER | PAL_ZERO);
+  struct frame *frame = allocate_frame(PAL_USER | PAL_ZERO);
+  if (frame == NULL || frame->page_addr == NULL)
+    goto done;
 
-  if (frame->page_addr != NULL)
-  {
-    success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame->page_addr, true);
-    if (success)
-    {
-      frame->vm_entry = vm_entry_create(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, 0, 0, 0);
-      if(!frame->vm_entry)
-      {
-        lock_release(&frame_table_lock);
-        return false;
-      }
-      vm_entry_insert(&thread_current()->vm, frame->vm_entry);
-      *esp = PHYS_BASE;
-    }  
-    else
-    {
-      release_frame(frame->page_addr);
-    }
+  // add page to pagedir
+  if(!install_page(upage, frame->page_addr, true)){
+    release_frame(frame->page_addr);
+    goto done;
   }
+  
+  // create vm_entry for stack
+  frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, 0, 0, 0);
+  if(!frame->vm_entry){
+    goto done;
+  }
+  vm_entry_insert(&thread_current()->vm, frame->vm_entry);
+  *esp = PHYS_BASE;
+  success = true;
+done:
   lock_release(&frame_table_lock);
   return success;
 }
+
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
@@ -620,18 +621,25 @@ void remove_child(struct thread* t)
   if(t) list_remove(&(t->child_elem));
 }
 
-// modified for lab3
+// modified for p3
 bool handle_fault(struct vm_entry *vm_entry)
 {
+  struct frame* frame = NULL;
   bool success = false;
+
   lock_acquire(&frame_table_lock);
-  struct frame* frame = allocate_frame (PAL_USER);
+
+  // 1. allocate frame
+  frame = allocate_frame (PAL_USER);
+  if(frame == NULL){
+    goto fail;
+  }
   frame->vm_entry = vm_entry;
+
+  // 2. read data to frame according to vm_entry type
   switch(vm_entry->type)
   {
     case VM_BIN:
-      success = read_file_to_page(frame->page_addr, vm_entry);
-      break;
     case VM_FILE:
       success = read_file_to_page(frame->page_addr, vm_entry);
       break;
@@ -639,63 +647,59 @@ bool handle_fault(struct vm_entry *vm_entry)
       success = swap_in(vm_entry->swap_slot, frame->page_addr);
       break;
     default:
-      lock_release(&frame_table_lock);
-      return false;
+      goto fail;
   }
 
-  if (!success)
-  {
-    release_frame(frame->page_addr);
-    lock_release(&frame_table_lock);
-    return false;
-  }
+  if (!success) goto fail;
+
+  // 3. add page to pagedir
   if (!install_page(vm_entry->vaddr, frame->page_addr, vm_entry->is_writable))
-  {
-    release_frame(frame->page_addr);
-    lock_release(&frame_table_lock);
-    return false;
-  }
-
+    goto fail;
   vm_entry->is_loaded = true;
   lock_release(&frame_table_lock);
   return true;
+
+fail:
+  if (frame != NULL)
+    release_frame(frame->page_addr);
+  lock_release(&frame_table_lock);
+  return false;
 }
 
 
 bool expand_stack(void *addr)
 {
-  struct frame *frame;
 	void *upage = pg_round_down(addr);
-  bool success = false;
+  struct frame *frame;
+  bool success;
 
   lock_acquire(&frame_table_lock);
+
+  // 1. allocate frame
 	frame = allocate_frame(PAL_USER | PAL_ZERO);
-	if (frame)
-  {
-    success = install_page(upage, frame->page_addr, true);
-    if (!success)
-    {
-      release_frame(frame->page_addr); // page 할당 해제
-      lock_release(&frame_table_lock);
-      return success;
-    }
-    else
-    {
-      frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, NULL, 0, 0);
-      if (!frame->vm_entry)
-      {
-        lock_release(&frame_table_lock);
-        return false;
-      }
-      vm_entry_insert(&thread_current()->vm, frame->vm_entry);
-      lock_release(&frame_table_lock);
-      return success;
-    }
-  }
-	else
-  {
+	if (frame == NULL){
     lock_release(&frame_table_lock);
-    return success;
+    return false;
   }
-    
+
+  // 2. add page to pagedir
+  success = install_page(upage, frame->page_addr, true);
+  if(!success){
+    release_frame(frame->page_addr);
+    lock_release(&frame_table_lock);
+    return false;
+  }
+
+  // 3. create vm_entry and insert to vm table
+  frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, 0, 0, 0);
+  if(!frame->vm_entry){
+    release_frame(frame->page_addr);
+    lock_release(&frame_table_lock);
+    return false;
+  }
+
+  // 4. insert vm_entry to vm table
+  vm_entry_insert(&thread_current()->vm, frame->vm_entry);
+  lock_release(&frame_table_lock);
+  return true;
 }
