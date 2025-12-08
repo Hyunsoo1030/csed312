@@ -27,7 +27,9 @@ static unsigned vm_hash (const struct hash_elem *e, void *aux UNUSED)
 
 static bool vm_less (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED)
 {
-	return hash_entry(a, struct vm_entry, elem)->vaddr < hash_entry(b, struct vm_entry, elem)->vaddr;
+	struct vm_entry *vm_entry_a = hash_entry(a, struct vm_entry, elem);
+	struct vm_entry *vm_entry_b = hash_entry(b, struct vm_entry, elem);
+	return vm_entry_a->vaddr < vm_entry_b->vaddr;
 }	
 
 // vm entry
@@ -40,46 +42,58 @@ bool vm_entry_insert (struct hash *vm, struct vm_entry *vm_entry)
 	
 }
 
-bool vm_entry_delete (struct hash *vm, struct vm_entry *vm_entry) // syscall munmap에서 호출
+bool vm_entry_delete (struct hash *vm, struct vm_entry *vme) // syscall munmap에서 호출
 {
+	bool success = false;
+
 	lock_acquire(&frame_table_lock);
-	if (hash_delete(vm, &vm_entry->elem)) {
-		release_frame(pagedir_get_page(thread_current()->pagedir, vm_entry->vaddr));
-		free(vm_entry);
-		lock_release(&frame_table_lock);
-		return true;
+
+	if (hash_delete(vm, &vme->elem) != NULL)
+	{
+		void *kaddr = pagedir_get_page(thread_current()->pagedir, vme->vaddr);
+		if (kaddr != NULL)
+		release_frame(kaddr);
+
+		free(vme);
+		success = true;
 	}
-	else{
-		lock_release(&frame_table_lock);
-		return false;
-	}
+
+	lock_release(&frame_table_lock);
+	return success;
 }	
 
 struct vm_entry *vm_entry_find (void *vaddr)
 {
 	struct hash *vm = &thread_current()->vm;
-	struct vm_entry vm_entry;
-	struct hash_elem *elem;
-	vm_entry.vaddr = pg_round_down(vaddr);
+	struct vm_entry tmp;
+	struct hash_elem *e;
 
-	if ((elem = hash_find(vm, &vm_entry.elem)))
-		return hash_entry(elem, struct vm_entry, elem);
-	else 
+	tmp.vaddr = pg_round_down(vaddr);
+
+	e = hash_find(vm, &tmp.elem);
+	if (e == NULL)
 		return NULL;
+
+	return hash_entry(e, struct vm_entry, elem);
 }
 
 void vm_destroy_action(struct hash_elem *e, void *aux UNUSED)
 {
-	struct vm_entry *vm_entry = hash_entry(e, struct vm_entry, elem);
+	struct vm_entry *vme = hash_entry(e, struct vm_entry, elem);
+
 	lock_acquire(&frame_table_lock);
-	if(vm_entry)
+
+	if (vme != NULL)
 	{
-		if(vm_entry->is_loaded)
+		if (vme->is_loaded)
 		{
-			release_frame(pagedir_get_page(thread_current()->pagedir, vm_entry->vaddr));
+		void *kaddr = pagedir_get_page(thread_current()->pagedir, vme->vaddr);
+		if (kaddr != NULL)
+			release_frame(kaddr);
 		}
-		free(vm_entry);
-	}	
+		free(vme);
+	}
+
 	lock_release(&frame_table_lock);
 	
 }
@@ -93,8 +107,10 @@ void vm_destroy (struct hash *vm)
 bool read_file_to_page (void* addr, struct vm_entry *vm_entry)
 {
 	lock_acquire(&filesys_lock);
+
 	int byte_read = file_read_at(vm_entry->file, addr, vm_entry->bytes_to_read, vm_entry->offset);
 	lock_release(&filesys_lock);
+	
 	if (byte_read != (int)vm_entry->bytes_to_read)
 		return false;
 	memset(addr + vm_entry->bytes_to_read, 0, vm_entry->zero_bytes);
