@@ -11,7 +11,7 @@ extern struct lock filesys_lock;
 
 struct list frame_table;
 struct lock frame_table_lock;
-struct list_elem *eviction_ptr;
+struct list_elem *eviction_ptr; // clock pointer for eviction
 
 // Initialize frame table and frame lock
 void frame_table_init(void)
@@ -23,23 +23,27 @@ void frame_table_init(void)
 // Add a frame to the frame table
 void frame_list_add(struct frame *frame)
 {
-    list_push_back(&frame_table, &frame->table_elem);
+	ASSERT (frame != NULL);
+  	list_push_back (&frame_table, &frame->table_elem);
 }
 
-// Remove a frame from the frame table
+// Remove a frame from the global frame table.
+//   If eviction_ptr points to this element, move it forward.
 void frame_list_remove(struct frame *frame)
 {	
-	// If the element being removed is pointed to by eviction_ptr, move eviction_ptr to the next element
-	if (eviction_ptr != &frame->table_elem)
-		list_remove(&frame->table_elem);
-	else if (eviction_ptr == &frame->table_elem)
-		eviction_ptr = list_remove(eviction_ptr);
+	ASSERT (frame != NULL);
+
+	if (eviction_ptr == &frame->table_elem)
+		eviction_ptr = list_remove (eviction_ptr);
+	else
+		list_remove (&frame->table_elem);
 }
 
 // Find a frame by its kernel address
 struct frame* find_frame_by_paddr(void* addr)
 {
     struct list_elem *e;
+
 	for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e)) {
 		struct frame *frame = list_entry(e, struct frame, table_elem);
 		if ((frame->page_addr) == addr)
@@ -54,7 +58,7 @@ struct frame* find_frame_by_vaddr(void* vaddr)
 	for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e))
 	{
 		struct frame *frame = list_entry(e, struct frame, table_elem);
-		if ((frame->vm_entry->vaddr) == vaddr)
+		if (frame->vm_entry != NULL && frame->vm_entry->vaddr == vaddr)
 			return frame;
 	}
 	return NULL;
@@ -68,75 +72,78 @@ struct frame* allocate_frame(enum palloc_flags flags)
 	ASSERT(flags & PAL_USER); // user memory only
 
 	// allocate frame structure
-    frame = (struct frame *)malloc(sizeof(struct frame));
-    if (!frame) return NULL;
-    memset(frame, 0, sizeof(struct frame));
+    frame = malloc (sizeof *frame);
+	if (frame == NULL)
+		return NULL;
+  	memset (frame, 0, sizeof *frame);
 
     frame->thread = thread_current();
 
-	// allocate physical page
-    frame->page_addr = palloc_get_page(flags);
-    while (!(frame->page_addr)){
-        evict_page_frame();
-        frame->page_addr = palloc_get_page(flags); 
-    }
+	// Keep trying until we get a physical page, evicting if needed.
+	while (frame->page_addr == NULL){
+		evict_page_frame ();
+		frame->page_addr = palloc_get_page (flags);
+	}
 
-	ASSERT(pg_ofs(frame->page_addr) == 0);
+	ASSERT (pg_ofs (frame->page_addr) == 0);
 	frame->pinned = false;
+	frame->vm_entry = NULL;
 
-	// add frame to frame table
-	frame_list_add(frame);		
-
-    return frame;
+	frame_list_add (frame);
+	return frame;
 }
 
-
+// Releases a frame and frees its resources
 void release_frame(void *addr)
 {
 	struct frame *frame = find_frame_by_paddr(addr);
-	if (frame) {
-		// Update the vm_entry to reflect that the page is no longer loaded
-		frame->vm_entry->is_loaded = false;
+	if (frame == NULL)
+    	return;
 
-		// Clear the page from the page directory 
-		pagedir_clear_page(frame->thread->pagedir, frame->vm_entry->vaddr);
+	if (frame->vm_entry != NULL){
+      frame->vm_entry->is_loaded = false;
+      pagedir_clear_page (frame->thread->pagedir, frame->vm_entry->vaddr);
+    }
 
-		// Free the physical page and remove the frame from the frame table
-		palloc_free_page(frame->page_addr);
-		frame_list_remove(frame);
-		free(frame);
-	}
+	palloc_free_page (frame->page_addr);
+	frame_list_remove (frame);
+	free (frame);
 }
 
+// Choose a victim frame for eviction using the clock algorithm
 struct frame* choose_victim_frame()
 {
-	struct list_elem *e;
 	struct frame *frame;
-	
-	while(true){ // infinite loop until a victim frame is found
-		if (!eviction_ptr || (eviction_ptr == list_end(&frame_table))){ // initialize or wrap around
-			if (!list_empty(&frame_table)){ // check if frame table is not empty
-				eviction_ptr = list_begin(&frame_table);
-				e = eviction_ptr;
+
+	if (list_empty (&frame_table))
+		return NULL;
+
+	for (;;)
+		{
+		if (eviction_ptr == NULL || eviction_ptr == list_end (&frame_table))
+			{
+			eviction_ptr = list_begin (&frame_table);
 			}
-			else // frame table is empty
-				return NULL;
+		else
+			{
+			eviction_ptr = list_next (eviction_ptr);
+			if (eviction_ptr == list_end (&frame_table))
+				continue;           /* wrap around */
+			}
+
+		frame = list_entry (eviction_ptr, struct frame, table_elem);
+
+		if (frame->pinned)
+			continue;
+
+		if (!pagedir_is_accessed (frame->thread->pagedir,
+									frame->vm_entry->vaddr))
+			return frame;
+
+		/* Second chance: clear accessed bit and move on. */
+		pagedir_set_accessed (frame->thread->pagedir,
+								frame->vm_entry->vaddr, false);
 		}
-		else{ // move to next element
-			eviction_ptr = list_next(eviction_ptr);
-			if (eviction_ptr == list_end(&frame_table)) // wrap around
-				continue;
-			e = eviction_ptr;
-		}
-		
-		frame = list_entry(e, struct frame, table_elem);
-		if(!frame->pinned){
-			if (!pagedir_is_accessed(frame->thread->pagedir, frame->vm_entry->vaddr))
-				return frame;
-			else
-				pagedir_set_accessed(frame->thread->pagedir, frame->vm_entry->vaddr, false);
-		}
-	}
 }
 
 // Evict a frame to free up space
@@ -188,21 +195,15 @@ void evict_page_frame()
 // Pin a frame to prevent it from being evicted
 void pin_frame(void *kaddr)
 {
-	struct frame *frame;
-	//lock_acquire(&frame_table_lock);
-	frame = find_frame_by_paddr(kaddr);
-	//if (frame)
-	frame->pinned = true;
-	//lock_release(&frame_table_lock);
+	struct frame *frame = find_frame_by_paddr (kaddr);
+	if (frame != NULL)
+		frame->pinned = true;
 }
 
 // Unpin a frame to allow it to be evicted
 void unpin_frame(void *kaddr)
 {
-	struct frame *frame;
-	//lock_acquire(&frame_table_lock);
-	frame = find_frame_by_paddr(kaddr);
-	//if (frame)
-	frame->pinned = false;
-	//lock_release(&frame_table_lock);
+	struct frame *frame = find_frame_by_paddr (kaddr);
+	if (frame != NULL)
+		frame->pinned = false;
 }
