@@ -14,7 +14,7 @@ static long long page_fault_cnt;
 static void kill (struct intr_frame *);
 static void page_fault (struct intr_frame *);
 
-extern struct lock frame_lock; // modified for p3
+extern struct lock frame_table_lock; // modified for p3
 
 /* Registers handlers for interrupts that can be caused by user
    programs.
@@ -157,21 +157,21 @@ page_fault (struct intr_frame *f)
   if(is_kernel_vaddr(fault_addr) || !not_present) 
   {
       // sync을 위하여 lock을 relase
-      if(lock_held_by_current_thread(&frame_lock))
+      if(lock_held_by_current_thread(&frame_table_lock))
       {
-         lock_release(&frame_lock);
+         lock_release(&frame_table_lock);
       }
       exit(-1);
   }
       
 
   // 2. vm_entry 정보 찾기   
-  struct vm_entry *vme = vme_find(fault_addr); 
+  struct vm_entry *vm_entry = vm_entry_find(fault_addr); 
   // 3. 해당 entry의 유효성을 확인
    void* esp = user ? f->esp : thread_current()->esp;
-   if(vme)
+   if(vm_entry)
    {
-      if (!handle_fault(vme))
+      if (!handle_fault(vm_entry))
       {
          exit(-1);
       }

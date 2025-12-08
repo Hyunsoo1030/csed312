@@ -12,16 +12,16 @@
 
 struct vm_entry 
 {
-	uint8_t type; //VM_BIN, VM_FILE, VM_ANON의 타입
-	void *vaddr; // virtual page number
-	bool writable; // write permission
-	bool is_loaded; // physical memory의 load 여부 flag 
-	struct file* file; // mapping된 파일 
-	size_t offset; // read file offset
-	size_t read_bytes; // virtual page에 쓰여져 있는 byte 수
-	size_t zero_bytes; // 0으로 채울 남은 페이지의 byte 수
-    struct hash_elem elem; // Hash Table element
-    struct list_elem mmap_elem; // mmap list element
+	uint8_t type; // VM_BIN, VM_FILE, VM_ANON
+	void *vaddr;
+	bool is_writable;
+	bool is_loaded;
+	struct file* file; 
+	size_t offset;
+	size_t bytes_to_read;
+	size_t zero_bytes;
+    struct hash_elem elem;
+    struct list_elem mmap_elem;
     size_t swap_slot;
 };
 
@@ -29,17 +29,19 @@ struct mmap_file {
   mapid_t mapid;        
   struct file* file;     
   struct list_elem elem; 
-  struct list vme_list;  
+  struct list mapping_pages;  
 };
 
 void vm_init (struct hash *vm);
 
-struct vm_entry *vme_find (void *vaddr);
+struct vm_entry *vm_entry_find (void *vaddr);
 
-bool vme_insert (struct hash *vm, struct vm_entry *vme);
-bool vme_delete (struct hash *vm, struct vm_entry *vme);
-void vm_destroy_func(struct hash_elem *e, void *aux);
+bool vm_entry_insert (struct hash *vm, struct vm_entry *vm_entry);
+bool vm_entry_delete (struct hash *vm, struct vm_entry *vm_entry);
+
+
+void vm_destroy_action(struct hash_elem *e, void *aux);
 void vm_destroy (struct hash *vm);
-bool load_file (void* kaddr, struct vm_entry *fte);
-struct vm_entry *vme_construct ( uint8_t type, void *vaddr, bool writable, bool is_loaded, struct file* file, size_t offset, size_t read_bytes, size_t zero_bytes);
+bool read_file_to_page (void* kaddr, struct vm_entry *fte);
+struct vm_entry *vm_entry_create ( uint8_t type, void *vaddr, bool is_writable, bool is_loaded, struct file* file, size_t offset, size_t bytes_to_read, size_t zero_bytes);
 #endif

@@ -6,200 +6,203 @@
 #include <string.h>
 #include "filesys/file.h"
 
+
 extern struct lock filesys_lock;
 
-struct list frame_table;   
-struct lock frame_lock;
-struct list_elem *frame_clock;
+struct list frame_table;
+struct lock frame_table_lock;
+struct list_elem *eviction_ptr;
 
-// Managing frame table
+// Initialize frame table and frame lock
 void frame_table_init(void)
 {
     list_init(&frame_table);
-	lock_init(&frame_lock);
-	frame_clock = NULL;
+	lock_init(&frame_table_lock);
+	eviction_ptr = NULL;
 }
-
-void frame_insert(struct frame *frame)
+// Add a frame to the frame table
+void frame_list_add(struct frame *frame)
 {
-    list_push_back(&frame_table, &frame->ft_elem);
+    list_push_back(&frame_table, &frame->table_elem);
 }
 
-void frame_delete(struct frame *frame)
+// Remove a frame from the frame table
+void frame_list_remove(struct frame *frame)
 {	
-	if (frame_clock != &frame->ft_elem)
-		list_remove(&frame->ft_elem);
-	else if (frame_clock == &frame->ft_elem)
-		frame_clock = list_remove(frame_clock);
+	// If the element being removed is pointed to by eviction_ptr, move eviction_ptr to the next element
+	if (eviction_ptr != &frame->table_elem)
+		list_remove(&frame->table_elem);
+	else if (eviction_ptr == &frame->table_elem)
+		eviction_ptr = list_remove(eviction_ptr);
 }
 
-struct frame* frame_find(void* addr)
+// Find a frame by its kernel address
+struct frame* find_frame_by_paddr(void* addr)
 {
     struct list_elem *e;
-	for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e))
-	{
-		struct frame *frame = list_entry(e, struct frame, ft_elem);
+	for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e)) {
+		struct frame *frame = list_entry(e, struct frame, table_elem);
 		if ((frame->page_addr) == addr)
-		{
 			return frame;
-		}
 	}
 	return NULL;
 }
-
-struct frame* find_frame_for_vaddr(void* vaddr)
+// Find a frame by the virtual address of its associated vm_entry
+struct frame* find_frame_by_vaddr(void* vaddr)
 {
     struct list_elem *e;
 	for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e))
 	{
-		struct frame *frame = list_entry(e, struct frame, ft_elem);
-		if ((frame->vme->vaddr) == vaddr)
+		struct frame *frame = list_entry(e, struct frame, table_elem);
+		if ((frame->vm_entry->vaddr) == vaddr)
 			return frame;
 	}
 	return NULL;
 }
 
-struct frame* alloc_frame(enum palloc_flags flags)
+// Allocates a physical page and creates a frame for it
+struct frame* allocate_frame(enum palloc_flags flags)
 {
     struct frame *frame; 
 
-	ASSERT(flags & PAL_USER);
+	ASSERT(flags & PAL_USER); // user memory only
 
+	// allocate frame structure
     frame = (struct frame *)malloc(sizeof(struct frame));
-	
     if (!frame) return NULL;
     memset(frame, 0, sizeof(struct frame));
 
     frame->thread = thread_current();
+
+	// allocate physical page
     frame->page_addr = palloc_get_page(flags);
-    while (!(frame->page_addr))
-    {
-		// evict하고 다시 할당해준다
-        evict_frame();
+    while (!(frame->page_addr)){
+        evict_page_frame();
         frame->page_addr = palloc_get_page(flags); 
     }
 
 	ASSERT(pg_ofs(frame->page_addr) == 0);
 	frame->pinned = false;
-	frame_insert(frame);		
+
+	// add frame to frame table
+	frame_list_add(frame);		
 
     return frame;
-    
 }
 
 
-void free_frame(void *addr)
+void release_frame(void *addr)
 {
-	struct frame *frame = frame_find(addr);
-	if (frame)
-	{	
-		frame->vme->is_loaded = false;
-		pagedir_clear_page(frame->thread->pagedir, frame->vme->vaddr);
+	struct frame *frame = find_frame_by_paddr(addr);
+	if (frame) {
+		// Update the vm_entry to reflect that the page is no longer loaded
+		frame->vm_entry->is_loaded = false;
+
+		// Clear the page from the page directory 
+		pagedir_clear_page(frame->thread->pagedir, frame->vm_entry->vaddr);
+
+		// Free the physical page and remove the frame from the frame table
 		palloc_free_page(frame->page_addr);
-		frame_delete(frame);
+		frame_list_remove(frame);
 		free(frame);
 	}
 }
 
-// 6. swap table
-
-void evict_frame()
-{
-	
-	// 1. victim frame 찾기
-  	struct frame *frame = find_victim();
-	// 2. 해당 frame의 dirty bit 확인
-  	bool dirty = pagedir_is_dirty(frame->thread->pagedir, frame->vme->vaddr);
-	 
-	// 3. frame을 evict할 때 vm_entry의 type을 고려
-	switch(frame->vme->type)
-	{
-		case VM_FILE:
-			if(dirty)
-			{	
-				lock_acquire(&filesys_lock);
-				file_write_at(frame->vme->file, frame->page_addr, frame->vme->read_bytes, frame->vme->offset);
-				lock_release(&filesys_lock);
-			}
-			break;
-		case VM_BIN:
-			if(dirty)
-			{	
-				frame->vme->swap_slot = swap_out(frame->page_addr);
-				frame->vme->type = VM_ANON;
-			}
-			break;
-		case VM_ANON:
-			frame->vme->swap_slot = swap_out(frame->page_addr);
-			break;
-	}
-	
-	// 4. free frame
-	pagedir_clear_page(frame->thread->pagedir, frame->vme->vaddr);
-	palloc_free_page(frame->page_addr);
-	frame_delete(frame);
-	frame->vme->is_loaded = false;
-	free(frame);
-	
-}
-
-
-struct frame* find_victim()
+struct frame* choose_victim_frame()
 {
 	struct list_elem *e;
 	struct frame *frame;
 	
-	while (true)
-	{
-		// clock algorithm에 따라 frame clock 이동
-		// clock이 맨 끝을 가리키는 경우
-		if (!frame_clock || (frame_clock == list_end(&frame_table)))
-		{
-			if (!list_empty(&frame_table))
-			{
-				frame_clock = list_begin(&frame_table);
-				e = list_begin(&frame_table);
+	while(true){ // infinite loop until a victim frame is found
+		if (!eviction_ptr || (eviction_ptr == list_end(&frame_table))){ // initialize or wrap around
+			if (!list_empty(&frame_table)){ // check if frame table is not empty
+				eviction_ptr = list_begin(&frame_table);
+				e = eviction_ptr;
 			}
-			else // frame table이 비어있는 경우
+			else // frame table is empty
 				return NULL;
 		}
-		else // next로 이동
-		{
-			frame_clock = list_next(frame_clock);
-			if (frame_clock == list_end(&frame_table))
+		else{ // move to next element
+			eviction_ptr = list_next(eviction_ptr);
+			if (eviction_ptr == list_end(&frame_table)) // wrap around
 				continue;
-			e = frame_clock;
+			e = eviction_ptr;
 		}
 		
-		frame = list_entry(e, struct frame, ft_elem);
-		// access bit 확인 -> 0이면 바로 Return
-		if(!frame->pinned)
-		{
-			if (!pagedir_is_accessed(frame->thread->pagedir, frame->vme->vaddr))
-			{
+		frame = list_entry(e, struct frame, table_elem);
+		if(!frame->pinned){
+			if (!pagedir_is_accessed(frame->thread->pagedir, frame->vm_entry->vaddr))
 				return frame;
-			}
 			else
-			{
-				// access bit 1이면 0으로 바꾸고 그 다음으로 clock이동
-				pagedir_set_accessed(frame->thread->pagedir, frame->vme->vaddr, false);
-			}
+				pagedir_set_accessed(frame->thread->pagedir, frame->vm_entry->vaddr, false);
 		}
-		
 	}
 }
 
-
-void frame_pin(void *kaddr)
+// Evict a frame to free up space
+void evict_page_frame()
 {
-	struct frame *f;
-	f = frame_find(kaddr);
-	f->pinned = true;
+	// 1. choose victim frame
+  	struct frame *frame = choose_victim_frame();
+	//if (!frame) return; // no frame to evict
+
+	// check if the frame is pinned (should not happen)
+  	bool is_modified = pagedir_is_dirty(frame->thread->pagedir, frame->vm_entry->vaddr);
+	
+	// 2. swap out or write back based on vm_entry type
+	switch(frame->vm_entry->type)
+	{
+		case VM_FILE:
+			if(is_modified) // write back to file if modified
+			{	
+				lock_acquire(&filesys_lock);
+				file_write_at(frame->vm_entry->file, frame->page_addr, frame->vm_entry->bytes_to_read, frame->vm_entry->offset);
+				lock_release(&filesys_lock);
+			}
+			break;
+
+		case VM_BIN:
+			if(is_modified) // write to swap if modified. if not, can be reloaded from executable
+			{	
+				frame->vm_entry->swap_slot = swap_out(frame->page_addr);
+				frame->vm_entry->type = VM_ANON;
+			}
+			break;
+
+		case VM_ANON:
+		    // Anonymous page: always swap out
+			frame->vm_entry->swap_slot = swap_out(frame->page_addr);
+			break;
+	}
+	
+	// 3. clean up frame and vm_entry
+	pagedir_clear_page(frame->thread->pagedir, frame->vm_entry->vaddr);
+	palloc_free_page(frame->page_addr);
+	
+	frame_list_remove(frame);
+	frame->vm_entry->is_loaded = false;
+	free(frame);
+	//release_frame(frame->page_addr);
 }
 
-void frame_unpin(void *kaddr)
+// Pin a frame to prevent it from being evicted
+void pin_frame(void *kaddr)
 {
-	struct frame *f;
-	f = frame_find(kaddr);
-	f->pinned = false;
+	struct frame *frame;
+	//lock_acquire(&frame_table_lock);
+	frame = find_frame_by_paddr(kaddr);
+	//if (frame)
+	frame->pinned = true;
+	//lock_release(&frame_table_lock);
+}
+
+// Unpin a frame to allow it to be evicted
+void unpin_frame(void *kaddr)
+{
+	struct frame *frame;
+	//lock_acquire(&frame_table_lock);
+	frame = find_frame_by_paddr(kaddr);
+	//if (frame)
+	frame->pinned = false;
+	//lock_release(&frame_table_lock);
 }

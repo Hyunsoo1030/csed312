@@ -161,12 +161,12 @@ pid_t exec (const char *cmd_line, void *esp)
   while(remained > 0)
   {
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
-    struct vm_entry* vme = vme_find(pg_round_down(buffer_temp));
-    if(vme)
+    struct vm_entry* vm_entry = vm_entry_find(pg_round_down(buffer_temp));
+    if(vm_entry)
     {
-      if(!vme->is_loaded)
+      if(!vm_entry->is_loaded)
       {
-        if (!handle_fault(vme))
+        if (!handle_fault(vm_entry))
         {
           exit(-1);
         }
@@ -190,11 +190,11 @@ pid_t exec (const char *cmd_line, void *esp)
       }
     }
     
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     size_t read_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_pin(frame_to_pin->page_addr);
-    lock_release(&frame_lock);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    pin_frame(frame_to_pin->page_addr);
+    lock_release(&frame_table_lock);
     remained -= read_bt;
     buffer_temp += read_bt;
   }
@@ -212,12 +212,12 @@ pid_t exec (const char *cmd_line, void *esp)
   buffer_temp = (void*)cmd_line;
   while(remained > 0)
   {
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
     size_t read_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_unpin(frame_to_pin->page_addr);
-    lock_release(&frame_lock);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    unpin_frame(frame_to_pin->page_addr);
+    lock_release(&frame_table_lock);
     remained -= read_bt;
     buffer_temp += read_bt;
   }
@@ -323,12 +323,12 @@ int read (int fd, void *buffer, unsigned size, void *esp)
   while(remained > 0)
   {
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
-    struct vm_entry* vme = vme_find(pg_round_down(buffer_temp));
-    if(vme)
+    struct vm_entry* vm_entry = vm_entry_find(pg_round_down(buffer_temp));
+    if(vm_entry)
     {
-      if(!vme->is_loaded)
+      if(!vm_entry->is_loaded)
       {
-        if (!handle_fault(vme))
+        if (!handle_fault(vm_entry))
         {
           exit(-1);
         }
@@ -351,11 +351,11 @@ int read (int fd, void *buffer, unsigned size, void *esp)
         exit(-1);
       }
     }
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     size_t read_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_pin(frame_to_pin->page_addr);
-    lock_release(&frame_lock);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    pin_frame(frame_to_pin->page_addr);
+    lock_release(&frame_table_lock);
     remained -= read_bt;
     buffer_temp += read_bt;
   }
@@ -382,14 +382,14 @@ int read (int fd, void *buffer, unsigned size, void *esp)
   buffer_temp = (void*)buffer;
   while(remained > 0)
   {
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
     size_t read_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_unpin(frame_to_pin->page_addr);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    unpin_frame(frame_to_pin->page_addr);
     remained -= read_bt;
     buffer_temp += read_bt;
-    lock_release(&frame_lock);
+    lock_release(&frame_table_lock);
   }
 
   return bytes_read;
@@ -411,12 +411,12 @@ int write (int fd, const void *buffer, unsigned size, void *esp)
   while(remained > 0)
   {
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
-    struct vm_entry* vme = vme_find(pg_round_down(buffer_temp));
-    if(vme)
+    struct vm_entry* vm_entry = vm_entry_find(pg_round_down(buffer_temp));
+    if(vm_entry)
     {
-      if(!(vme->is_loaded))
+      if(!(vm_entry->is_loaded))
       {
-        if (!handle_fault(vme))
+        if (!handle_fault(vm_entry))
         {
           exit(-1);
         }
@@ -440,13 +440,13 @@ int write (int fd, const void *buffer, unsigned size, void *esp)
       }
     }
     
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     size_t write_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_pin(frame_to_pin->page_addr);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    pin_frame(frame_to_pin->page_addr);
     remained -= write_bt;
     buffer_temp += write_bt;
-    lock_release(&frame_lock);
+    lock_release(&frame_table_lock);
   }
 
  if(fd == 1){
@@ -471,14 +471,14 @@ int write (int fd, const void *buffer, unsigned size, void *esp)
  
  while(remained > 0)
   {
-    lock_acquire(&frame_lock);
+    lock_acquire(&frame_table_lock);
     // size_t ofs = buffer_temp - pg_round_down(buffer_temp);
     size_t write_bt = remained > PGSIZE - pg_ofs(buffer_temp) ? PGSIZE - pg_ofs(buffer_temp) : remained;
-    struct frame* frame_to_pin = find_frame_for_vaddr(pg_round_down(buffer_temp));
-    frame_unpin(frame_to_pin->page_addr);
+    struct frame* frame_to_pin = find_frame_by_vaddr(pg_round_down(buffer_temp));
+    unpin_frame(frame_to_pin->page_addr);
     remained -= write_bt;
     buffer_temp += write_bt;
-    lock_release(&frame_lock);
+    lock_release(&frame_table_lock);
   }
 
  return bytes_write;
@@ -553,24 +553,24 @@ mapid_t mmap(int fd, void* addr)
 
 
 	// 3. vm_entry 할당
-	list_init(&mfe->vme_list);	
+	list_init(&mfe->mapping_pages);	
   
 	while(file_remained > 0)// file 다 읽을 때 까지 반복
 	{
 		// vm entry 할당
-    if (vme_find(addr)) return -1;
+    if (vm_entry_find(addr)) return -1;
 
-    size_t page_read_bytes = file_remained < PGSIZE ? file_remained : PGSIZE;
-    size_t page_zero_bytes = PGSIZE - page_read_bytes;
+    size_t page_bytes_to_read = file_remained < PGSIZE ? file_remained : PGSIZE;
+    size_t page_zero_bytes = PGSIZE - page_bytes_to_read;
 
-    struct vm_entry* vme = vme_construct(VM_FILE, addr, true, false, file, offset, page_read_bytes, page_zero_bytes);
-    if (!vme) 
+    struct vm_entry* vm_entry = vm_entry_create(VM_FILE, addr, true, false, file, offset, page_bytes_to_read, page_zero_bytes);
+    if (!vm_entry) 
       return false;
 
-		// 2. vme_list에 mmap_elem과 연결된 vm entry 추가
-    list_push_back(&mfe->vme_list, &vme->mmap_elem);
-		// 3. current thread에 대해 vme insert
-    vme_insert(&thread_current()->vm, vme);
+		// 2. mapping_pages에 mmap_elem과 연결된 vm entry 추가
+    list_push_back(&mfe->mapping_pages, &vm_entry->mmap_elem);
+		// 3. current thread에 대해 vm_entry insert
+    vm_entry_insert(&thread_current()->vm, vm_entry);
 		
     // 4. file addr, offset 업데이트 (page size만큼)
     addr += PGSIZE;
@@ -599,22 +599,22 @@ void munmap(mapid_t mapid)
   }
   if(mfe == NULL) return;
 
-	// 2. 해당 mfe의 vme_list를 돌면서 vme를 지우기
-	for (e = list_begin(&mfe->vme_list); e != list_end(&mfe->vme_list);)
+	for (e = list_begin(&mfe->mapping_pages); e != list_end(&mfe->mapping_pages);)
   {
-    struct vm_entry *vme = list_entry(e, struct vm_entry, mmap_elem);
-    if(vme->is_loaded && (pagedir_is_dirty(thread_current()->pagedir, vme->vaddr)))
+    struct vm_entry *vm_entry = list_entry(e, struct vm_entry, mmap_elem);
+    if(vm_entry->is_loaded && (pagedir_is_dirty(thread_current()->pagedir, vm_entry->vaddr)))
     {
       lock_acquire(&filesys_lock);
-      file_write_at(vme->file, vme->vaddr, vme->read_bytes, vme->offset);
+      file_write_at(vm_entry->file, vm_entry->vaddr, vm_entry->bytes_to_read, vm_entry->offset);
       lock_release(&filesys_lock);
-      lock_acquire(&frame_lock);
-      free_frame(pagedir_get_page(thread_current()->pagedir, vme->vaddr));
-      lock_release(&frame_lock);
+      
+      lock_acquire(&frame_table_lock);
+      release_frame(pagedir_get_page(thread_current()->pagedir, vm_entry->vaddr));
+      lock_release(&frame_table_lock);
     }
-    vme->is_loaded = false;
+    vm_entry->is_loaded = false;
     e = list_remove(e);
-    vme_delete(&thread_current()->vm, vme);
+    vm_entry_delete(&thread_current()->vm, vm_entry);
   }
 	// 4. mfe를 mmap_list에서 제거
   list_remove(&mfe->elem);

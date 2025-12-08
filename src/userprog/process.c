@@ -27,7 +27,7 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 extern struct lock filesys_lock; // modified for p2
-extern struct lock frame_lock; // modified for p3
+extern struct lock frame_table_lock; // modified for p3
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -261,14 +261,14 @@ struct Elf32_Phdr
 
 /* Flags for p_flags.  See [ELF3] 2-3 and 2-4. */
 #define PF_X 1          /* Executable. */
-#define PF_W 2          /* Writable. */
+#define PF_W 2          /* is_writable. */
 #define PF_R 4          /* Readable. */
 
 static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
 static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
-                          uint32_t read_bytes, uint32_t zero_bytes,
-                          bool writable);
+                          uint32_t bytes_to_read, uint32_t zero_bytes,
+                          bool is_writable);
 
 /* Loads an ELF executable from FILE_NAME into the current thread.
    Stores the executable's entry point into *EIP
@@ -347,28 +347,28 @@ load (const char *file_name, void (**eip) (void), void **esp)
         case PT_LOAD:
           if (validate_segment (&phdr, file)) 
             {
-              bool writable = (phdr.p_flags & PF_W) != 0;
+              bool is_writable = (phdr.p_flags & PF_W) != 0;
               uint32_t file_page = phdr.p_offset & ~PGMASK;
               uint32_t mem_page = phdr.p_vaddr & ~PGMASK;
               uint32_t page_offset = phdr.p_vaddr & PGMASK;
-              uint32_t read_bytes, zero_bytes;
+              uint32_t bytes_to_read, zero_bytes;
               if (phdr.p_filesz > 0)
                 {
                   /* Normal segment.
                      Read initial part from disk and zero the rest. */
-                  read_bytes = page_offset + phdr.p_filesz;
+                  bytes_to_read = page_offset + phdr.p_filesz;
                   zero_bytes = (ROUND_UP (page_offset + phdr.p_memsz, PGSIZE)
-                                - read_bytes);
+                                - bytes_to_read);
                 }
               else 
                 {
                   /* Entirely zero.
                      Don't read anything from disk. */
-                  read_bytes = 0;
+                  bytes_to_read = 0;
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
               if (!load_segment (file, file_page, (void *) mem_page,
-                                 read_bytes, zero_bytes, writable))
+                                 bytes_to_read, zero_bytes, is_writable))
                 goto done;
             }
           else
@@ -394,7 +394,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
+static bool install_page (void *upage, void *kpage, bool is_writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -442,69 +442,48 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
-   UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
+   UPAGE.  In total, bytes_to_read + ZERO_BYTES bytes of virtual
    memory are initialized, as follows:
 
-        - READ_BYTES bytes at UPAGE must be read from FILE
+        - bytes_to_read bytes at UPAGE must be read from FILE
           starting at offset OFS.
 
-        - ZERO_BYTES bytes at UPAGE + READ_BYTES must be zeroed.
+        - ZERO_BYTES bytes at UPAGE + bytes_to_read must be zeroed.
 
-   The pages initialized by this function must be writable by the
-   user process if WRITABLE is true, read-only otherwise.
+   The pages initialized by this function must be is_writable by the
+   user process if is_writable is true, read-only otherwise.
 
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
 load_segment (struct file *file, off_t ofs, uint8_t *upage,
-              uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
+              uint32_t bytes_to_read, uint32_t zero_bytes, bool is_writable) 
 {
-  ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
+  ASSERT ((bytes_to_read + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
   file_seek (file, ofs);
-  while (read_bytes > 0 || zero_bytes > 0) 
+  while (bytes_to_read > 0 || zero_bytes > 0) 
     {
       /* Calculate how to fill this page.
-         We will read PAGE_READ_BYTES bytes from FILE
+         We will read PAGE_bytes_to_read bytes from FILE
          and zero the final PAGE_ZERO_BYTES bytes. */
-      size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-      size_t page_zero_bytes = PGSIZE - page_read_bytes;
+      size_t page_bytes_to_read = bytes_to_read < PGSIZE ? bytes_to_read : PGSIZE;
+      size_t page_zero_bytes = PGSIZE - page_bytes_to_read;
 
       // modified for p3
-      
-      //  /* Get a page of memory. */
-      // uint8_t *kpage = palloc_get_page (PAL_USER);
-      // if (kpage == NULL)
-      //   return false;
 
-      // /* Load this page. */
-      // if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-      //   {
-      //     palloc_free_page (kpage);
-      //     return false; 
-      //   }
-      // memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      // /* Add the page to the process's address space. */
-      // if (!install_page (upage, kpage, writable)) 
-      //   {
-      //     palloc_free_page (kpage);
-      //     return false; 
-      //   }
-      
-      //modified for p3
-      struct vm_entry *vme = vme_construct(VM_BIN, upage, writable, false, file, ofs, page_read_bytes, page_zero_bytes);
-      if(!vme) return false;
-      vme_insert(&thread_current()->vm, vme);
+      struct vm_entry *vm_entry = vm_entry_create(VM_BIN, upage, is_writable, false, file, ofs, page_bytes_to_read, page_zero_bytes);
+      if(!vm_entry) return false;
+      vm_entry_insert(&thread_current()->vm, vm_entry);
 
       /* Advance. */
-      read_bytes -= page_read_bytes;
+      bytes_to_read -= page_bytes_to_read;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
       //modified for p3
-      ofs += page_read_bytes;
+      ofs += page_bytes_to_read;
     }
   return true;
 }
@@ -519,44 +498,35 @@ setup_stack (void **esp)
   struct frame *frame;
 
   // modified for p3
-  lock_acquire(&frame_lock);
-  frame = alloc_frame(PAL_USER | PAL_ZERO);
+  lock_acquire(&frame_table_lock);
+  frame = allocate_frame(PAL_USER | PAL_ZERO);
 
-  // kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  // if (kpage != NULL) 
-  //   {
-  //     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-  //     if (success)
-  //       *esp = PHYS_BASE;
-  //     else
-  //       palloc_free_page (kpage);
-  //   }
   if (frame->page_addr != NULL)
   {
     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, frame->page_addr, true);
     if (success)
     {
-      frame->vme = vme_construct(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, 0, 0, 0);
-      if(!frame->vme)
+      frame->vm_entry = vm_entry_create(VM_ANON, ((uint8_t *) PHYS_BASE) - PGSIZE, true, true, NULL, 0, 0, 0);
+      if(!frame->vm_entry)
       {
-        lock_release(&frame_lock);
+        lock_release(&frame_table_lock);
         return false;
       }
-      vme_insert(&thread_current()->vm, frame->vme);
+      vm_entry_insert(&thread_current()->vm, frame->vm_entry);
       *esp = PHYS_BASE;
     }  
     else
     {
-      free_frame(frame->page_addr);
+      release_frame(frame->page_addr);
     }
   }
-  lock_release(&frame_lock);
+  lock_release(&frame_table_lock);
   return success;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
    virtual address KPAGE to the page table.
-   If WRITABLE is true, the user process may modify the page;
+   If is_writable is true, the user process may modify the page;
    otherwise, it is read-only.
    UPAGE must not already be mapped.
    KPAGE should probably be a page obtained from the user pool
@@ -564,14 +534,14 @@ setup_stack (void **esp)
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
 static bool
-install_page (void *upage, void *kpage, bool writable)
+install_page (void *upage, void *kpage, bool is_writable)
 {
   struct thread *t = thread_current ();
 
   /* Verify that there's not already a page at that virtual
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
+          && pagedir_set_page (t->pagedir, upage, kpage, is_writable));
 }
 
 
@@ -651,43 +621,43 @@ void remove_child(struct thread* t)
 }
 
 // modified for lab3
-bool handle_fault(struct vm_entry *vme)
+bool handle_fault(struct vm_entry *vm_entry)
 {
   bool success = false;
-  lock_acquire(&frame_lock);
-  struct frame* frame = alloc_frame (PAL_USER);
-  frame->vme = vme;
-  switch(vme->type)
+  lock_acquire(&frame_table_lock);
+  struct frame* frame = allocate_frame (PAL_USER);
+  frame->vm_entry = vm_entry;
+  switch(vm_entry->type)
   {
     case VM_BIN:
-      success = load_file(frame->page_addr, vme);
+      success = read_file_to_page(frame->page_addr, vm_entry);
       break;
     case VM_FILE:
-      success = load_file(frame->page_addr, vme);
+      success = read_file_to_page(frame->page_addr, vm_entry);
       break;
     case VM_ANON:
-      success = swap_in(vme->swap_slot, frame->page_addr);
+      success = swap_in(vm_entry->swap_slot, frame->page_addr);
       break;
     default:
-      lock_release(&frame_lock);
+      lock_release(&frame_table_lock);
       return false;
   }
 
   if (!success)
   {
-    free_frame(frame->page_addr);
-    lock_release(&frame_lock);
+    release_frame(frame->page_addr);
+    lock_release(&frame_table_lock);
     return false;
   }
-  if (!install_page(vme->vaddr, frame->page_addr, vme->writable))
+  if (!install_page(vm_entry->vaddr, frame->page_addr, vm_entry->is_writable))
   {
-    free_frame(frame->page_addr);
-    lock_release(&frame_lock);
+    release_frame(frame->page_addr);
+    lock_release(&frame_table_lock);
     return false;
   }
 
-  vme->is_loaded = true;
-  lock_release(&frame_lock);
+  vm_entry->is_loaded = true;
+  lock_release(&frame_table_lock);
   return true;
 }
 
@@ -698,33 +668,33 @@ bool expand_stack(void *addr)
 	void *upage = pg_round_down(addr);
   bool success = false;
 
-  lock_acquire(&frame_lock);
-	frame = alloc_frame(PAL_USER | PAL_ZERO);
+  lock_acquire(&frame_table_lock);
+	frame = allocate_frame(PAL_USER | PAL_ZERO);
 	if (frame)
   {
     success = install_page(upage, frame->page_addr, true);
     if (!success)
     {
-      free_frame(frame->page_addr); // page 할당 해제
-      lock_release(&frame_lock);
+      release_frame(frame->page_addr); // page 할당 해제
+      lock_release(&frame_table_lock);
       return success;
     }
     else
     {
-      frame->vme = vme_construct(VM_ANON, upage, true, true, NULL, NULL, 0, 0);
-      if (!frame->vme)
+      frame->vm_entry = vm_entry_create(VM_ANON, upage, true, true, NULL, NULL, 0, 0);
+      if (!frame->vm_entry)
       {
-        lock_release(&frame_lock);
+        lock_release(&frame_table_lock);
         return false;
       }
-      vme_insert(&thread_current()->vm, frame->vme);
-      lock_release(&frame_lock);
+      vm_entry_insert(&thread_current()->vm, frame->vm_entry);
+      lock_release(&frame_table_lock);
       return success;
     }
   }
 	else
   {
-    lock_release(&frame_lock);
+    lock_release(&frame_table_lock);
     return success;
   }
     
