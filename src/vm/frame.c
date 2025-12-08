@@ -99,12 +99,25 @@ void free_frame(void *addr)
 	}
 }
 
+void pin_frame(void *kaddr)
+{
+	struct frame *frame;
+	frame = find_frame_by_paddr(kaddr);
+	frame->pinned = true;
+}
+
+void unpin_frame(void *kaddr)
+{
+	struct frame *frame;
+	frame = find_frame_by_paddr(kaddr);
+	frame->pinned = false;
+}
+
 struct frame* chose_victim_frame()
 {
     struct list_elem *e;
     struct frame *frame;
     
-    // 프레임 테이블이 비어 있는지 확인 (초기 단계)
     if (list_empty(&frame_table)) {
         return NULL;
     }
@@ -130,20 +143,6 @@ struct frame* chose_victim_frame()
             }
         }
     }
-}
-
-void pin_frame(void *kaddr)
-{
-	struct frame *frame;
-	frame = find_frame_by_paddr(kaddr);
-	frame->pinned = true;
-}
-
-void unpin_frame(void *kaddr)
-{
-	struct frame *frame;
-	frame = find_frame_by_paddr(kaddr);
-	frame->pinned = false;
 }
 
 void evict_page_frame()
